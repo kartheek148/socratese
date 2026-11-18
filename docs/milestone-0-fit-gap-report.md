@@ -209,6 +209,8 @@ Baseline test state today: no tests or commands exist, so none were run.
 
 ## 10. Assumptions and open questions
 
+> **Resolved (2026-11-18):** all eight questions below were answered at review; see [ADR 0004](./decisions/0004-milestone-0-review-decisions.md). Note: CI is not GitHub Actions, so the proposed commands in §9 are run locally.
+
 Assumptions: greenfield defaults apply; Python 3.12 + `uv`; single-repo modular monolith; GitHub Actions for CI; simulated debugging benchmark for M1.
 
 Open questions for review:

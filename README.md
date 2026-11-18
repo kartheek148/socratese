@@ -9,6 +9,17 @@ This package contains a repository-ready starting point for implementing an Expe
 - `docs/architecture.md` — system architecture, components, interfaces, data model, execution flows, safety, and measurement.
 - `docs/implementation-roadmap.md` — milestone plan and acceptance criteria.
 
+## Development (Milestone 1)
+
+```
+uv sync
+uv run ruff check . && uv run ruff format --check .
+uv run mypy src
+uv run pytest
+```
+
+Benchmark and baseline: see [docs/benchmark.md](docs/benchmark.md).
+
 ## How to use
 
 1. Copy `.github/` and `docs/` into the root of your repository. Merge with existing files; do not overwrite established repository instructions without reviewing them.

@@ -2,6 +2,8 @@
 
 > **Repository fit (Milestone 0):** the repository is greenfield. See [milestone-0-fit-gap-report.md](./milestone-0-fit-gap-report.md) for the component-to-path map, schema rollout, contract gaps (G1–G8), and [decisions/](./decisions/) for ADRs.
 
+> **Milestone 1 contract changes:** `RunOutcome` additionally carries `task_id`, `tenant_id`, `config_id`, `policy_version`, `capability_version` and typed `verification_results`; `TaskSpec.success_criteria` is a typed discriminated union whose items have a `goal`/`guard` role and are never shown to the agent; `ControllerDecision` and `BenchmarkRunRecord` are new domain contracts (`src/experience_engine/domain/`). Review decisions: [ADR 0004](./decisions/0004-milestone-0-review-decisions.md). Benchmark and commands: [benchmark.md](./benchmark.md).
+
 ## 1. Objective and non-goals
 
 ### Objective

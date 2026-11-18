@@ -1,0 +1,75 @@
+{
+  "environment": {
+    "files": {
+      "config/client.json": "{\n  \"okhttp\": {\n    \"callTimeoutMillis\": 0,\n    \"readTimeoutMillis\": 1000,\n    \"maxRetries\": 2\n  }\n}",
+      "infra/gateway.json": "{\n  \"max_request_ms\": 60000\n}",
+      "logs/app.log": "2025-03-01T10:00:00Z INFO upstream route=/stock latency_ms=1329 status=200\n2025-03-01T10:00:01Z INFO upstream route=/stock latency_ms=1571 status=200\n2025-03-01T10:00:02Z INFO upstream route=/stock latency_ms=1325 status=200\n2025-03-01T10:00:03Z INFO upstream route=/stock latency_ms=1516 status=200\n2025-03-01T10:00:04Z INFO upstream route=/stock latency_ms=957 status=200\n2025-03-01T10:00:05Z ERROR java.net.SocketTimeoutException: timeout (readTimeoutMillis=1000)\n2025-03-01T10:00:06Z INFO upstream route=/stock latency_ms=844 status=200\n2025-03-01T10:00:07Z INFO upstream route=/stock latency_ms=3000 status=200\n2025-03-01T10:00:08Z INFO upstream route=/stock latency_ms=1266 status=200\n2025-03-01T10:00:09Z INFO upstream route=/stock latency_ms=1414 status=200\n2025-03-01T10:00:10Z INFO upstream route=/stock latency_ms=1122 status=200\n2025-03-01T10:00:11Z INFO upstream route=/stock latency_ms=1499 status=200\n2025-03-01T10:00:12Z ERROR java.net.SocketTimeoutException: timeout (readTimeoutMillis=1000)"
+    }
+  },
+  "family": "timeout",
+  "task": {
+    "allowed_tools": [
+      "list_files",
+      "read_file",
+      "set_json_value"
+    ],
+    "context_refs": [],
+    "deadline_ms": 300000,
+    "inputs": {
+      "service": "inventory-client"
+    },
+    "max_steps": 12,
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "objective": "Calls to the upstream inventory API intermittently fail with client timeouts. Investigate the logs and configuration and fix the client's read timeout so legitimate slow responses succeed, without exceeding the gateway's maximum request time. Files under infra/ are managed by another team and must not change; leave the retry settings alone.",
+    "risk_level": "low",
+    "success_criteria": [
+      {
+        "config_path": "config/client.json",
+        "kind": "timeout_covers_latency",
+        "latency_samples_ms": [
+          1329,
+          1571,
+          1325,
+          1516,
+          957,
+          844,
+          3000,
+          1266,
+          1414,
+          1122,
+          1499
+        ],
+        "max_timeout_ms": 60000,
+        "role": "goal",
+        "timeout_key": "okhttp.readTimeoutMillis",
+        "unit_ms": 1
+      },
+      {
+        "expected": 60000,
+        "key": "max_request_ms",
+        "kind": "value_unchanged",
+        "path": "infra/gateway.json",
+        "role": "guard"
+      },
+      {
+        "expected": 2,
+        "key": "okhttp.maxRetries",
+        "kind": "value_unchanged",
+        "path": "config/client.json",
+        "role": "guard"
+      },
+      {
+        "expected": 0,
+        "key": "okhttp.callTimeoutMillis",
+        "kind": "value_unchanged",
+        "path": "config/client.json",
+        "role": "guard"
+      }
+    ],
+    "task_family": "timeout",
+    "task_id": "hid-timeout-okhttp-01",
+    "tenant_id": "bench"
+  },
+  "variant": "okhttp"
+}

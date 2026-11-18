@@ -1,0 +1,71 @@
+{
+  "environment": {
+    "files": {
+      "app/settings.json": "{\n  \"workers\": 4,\n  \"threads\": 5,\n  \"db\": {\n    \"dsn\": \"postgresql://app@db.internal/app\",\n    \"min_size\": 1,\n    \"max_size\": 5,\n    \"timeout\": 30\n  }\n}",
+      "infra/db.json": "{\n  \"engine\": \"postgres\",\n  \"max_connections\": 40,\n  \"reserved_connections\": 10\n}",
+      "logs/app.log": "2025-03-01T10:00:00Z INFO request ok route=/orders id=7920\n2025-03-01T10:00:01Z INFO request ok route=/orders id=6100\n2025-03-01T10:00:02Z INFO request ok route=/orders id=5140\n2025-03-01T10:00:03Z ERROR psycopg_pool.PoolTimeout: couldn't get a connection after 30.00 sec (pool max_size=5)\n2025-03-01T10:00:04Z ERROR psycopg_pool.PoolTimeout: couldn't get a connection after 30.00 sec (pool max_size=5)\n2025-03-01T10:00:05Z ERROR psycopg_pool.PoolTimeout: couldn't get a connection after 30.00 sec (pool max_size=5)\n2025-03-01T10:00:06Z INFO request ok route=/orders id=5948\n2025-03-01T10:00:07Z INFO request ok route=/orders id=2953\n2025-03-01T10:00:08Z INFO request ok route=/orders id=3856"
+    }
+  },
+  "family": "pool",
+  "task": {
+    "allowed_tools": [
+      "list_files",
+      "read_file",
+      "set_json_value"
+    ],
+    "context_refs": [],
+    "deadline_ms": 300000,
+    "inputs": {
+      "service": "orders-api"
+    },
+    "max_steps": 12,
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "objective": "The service intermittently fails with database connection-pool timeouts under load. Investigate the logs and configuration and fix the application configuration so the pool can serve the service's concurrent demand without exceeding the database's usable connection limit. Files under infra/ are managed by another team and must not change; do not reduce the service's concurrency to hide the problem.",
+    "risk_level": "low",
+    "success_criteria": [
+      {
+        "capacity_keys": [
+          "db.max_size"
+        ],
+        "config_path": "app/settings.json",
+        "kind": "pool_capacity",
+        "max_capacity": 30,
+        "min_capacity": 20,
+        "role": "goal"
+      },
+      {
+        "expected": 40,
+        "key": "max_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 10,
+        "key": "reserved_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 4,
+        "key": "workers",
+        "kind": "value_unchanged",
+        "path": "app/settings.json",
+        "role": "guard"
+      },
+      {
+        "expected": 5,
+        "key": "threads",
+        "kind": "value_unchanged",
+        "path": "app/settings.json",
+        "role": "guard"
+      }
+    ],
+    "task_family": "pool",
+    "task_id": "disc-pool-psycopg_pool-00",
+    "tenant_id": "bench"
+  },
+  "variant": "psycopg_pool"
+}

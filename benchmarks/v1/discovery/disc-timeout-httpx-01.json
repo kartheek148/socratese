@@ -1,0 +1,67 @@
+{
+  "environment": {
+    "files": {
+      "client/config.json": "{\n  \"http\": {\n    \"base_url\": \"https://inventory.internal\",\n    \"timeout_ms\": 1000,\n    \"retries\": 2\n  }\n}",
+      "infra/gateway.json": "{\n  \"max_request_ms\": 60000\n}",
+      "logs/app.log": "2025-03-01T10:00:00Z INFO upstream route=/stock latency_ms=1436 status=200\n2025-03-01T10:00:01Z INFO upstream route=/stock latency_ms=1134 status=200\n2025-03-01T10:00:02Z INFO upstream route=/stock latency_ms=1176 status=200\n2025-03-01T10:00:03Z INFO upstream route=/stock latency_ms=1162 status=200\n2025-03-01T10:00:04Z INFO upstream route=/stock latency_ms=2379 status=200\n2025-03-01T10:00:05Z ERROR httpx.ReadTimeout: timed out after 1000 ms route=/stock\n2025-03-01T10:00:06Z INFO upstream route=/stock latency_ms=1541 status=200\n2025-03-01T10:00:07Z INFO upstream route=/stock latency_ms=1572 status=200\n2025-03-01T10:00:08Z INFO upstream route=/stock latency_ms=1053 status=200\n2025-03-01T10:00:09Z INFO upstream route=/stock latency_ms=1366 status=200\n2025-03-01T10:00:10Z INFO upstream route=/stock latency_ms=1531 status=200\n2025-03-01T10:00:11Z ERROR httpx.ReadTimeout: timed out after 1000 ms route=/stock"
+    }
+  },
+  "family": "timeout",
+  "task": {
+    "allowed_tools": [
+      "list_files",
+      "read_file",
+      "set_json_value"
+    ],
+    "context_refs": [],
+    "deadline_ms": 300000,
+    "inputs": {
+      "service": "inventory-client"
+    },
+    "max_steps": 12,
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "objective": "Calls to the upstream inventory API intermittently fail with client timeouts. Investigate the logs and configuration and fix the client's read timeout so legitimate slow responses succeed, without exceeding the gateway's maximum request time. Files under infra/ are managed by another team and must not change; leave the retry settings alone.",
+    "risk_level": "low",
+    "success_criteria": [
+      {
+        "config_path": "client/config.json",
+        "kind": "timeout_covers_latency",
+        "latency_samples_ms": [
+          1436,
+          1134,
+          1176,
+          1162,
+          2379,
+          1541,
+          1572,
+          1053,
+          1366,
+          1531
+        ],
+        "max_timeout_ms": 60000,
+        "role": "goal",
+        "timeout_key": "http.timeout_ms",
+        "unit_ms": 1
+      },
+      {
+        "expected": 60000,
+        "key": "max_request_ms",
+        "kind": "value_unchanged",
+        "path": "infra/gateway.json",
+        "role": "guard"
+      },
+      {
+        "expected": 2,
+        "key": "http.retries",
+        "kind": "value_unchanged",
+        "path": "client/config.json",
+        "role": "guard"
+      }
+    ],
+    "task_family": "timeout",
+    "task_id": "disc-timeout-httpx-01",
+    "tenant_id": "bench"
+  },
+  "variant": "httpx"
+}

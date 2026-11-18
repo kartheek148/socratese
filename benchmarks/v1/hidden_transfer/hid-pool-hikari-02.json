@@ -1,0 +1,64 @@
+{
+  "environment": {
+    "files": {
+      "config/application.json": "{\n  \"server\": {\n    \"tomcat\": {\n      \"threads\": {\n        \"max\": 24\n      }\n    }\n  },\n  \"spring\": {\n    \"datasource\": {\n      \"hikari\": {\n        \"maximumPoolSize\": 8,\n        \"connectionTimeout\": 30000\n      }\n    }\n  }\n}",
+      "infra/db.json": "{\n  \"engine\": \"postgres\",\n  \"max_connections\": 64,\n  \"reserved_connections\": 10\n}",
+      "logs/app.log": "2025-03-01T10:00:00Z INFO request ok route=/orders id=5711\n2025-03-01T10:00:01Z INFO request ok route=/orders id=4510\n2025-03-01T10:00:02Z INFO request ok route=/orders id=9031\n2025-03-01T10:00:03Z ERROR HikariPool-1 - Connection is not available, request timed out after 30000ms (total=8, active=8, idle=0, waiting=16)\n2025-03-01T10:00:04Z ERROR HikariPool-1 - Connection is not available, request timed out after 30000ms (total=8, active=8, idle=0, waiting=16)\n2025-03-01T10:00:05Z ERROR HikariPool-1 - Connection is not available, request timed out after 30000ms (total=8, active=8, idle=0, waiting=16)\n2025-03-01T10:00:06Z INFO request ok route=/orders id=8691\n2025-03-01T10:00:07Z INFO request ok route=/orders id=3468\n2025-03-01T10:00:08Z INFO request ok route=/orders id=1690"
+    }
+  },
+  "family": "pool",
+  "task": {
+    "allowed_tools": [
+      "list_files",
+      "read_file",
+      "set_json_value"
+    ],
+    "context_refs": [],
+    "deadline_ms": 300000,
+    "inputs": {
+      "service": "orders-api"
+    },
+    "max_steps": 12,
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "objective": "The service intermittently fails with database connection-pool timeouts under load. Investigate the logs and configuration and fix the application configuration so the pool can serve the service's concurrent demand without exceeding the database's usable connection limit. Files under infra/ are managed by another team and must not change; do not reduce the service's concurrency to hide the problem.",
+    "risk_level": "low",
+    "success_criteria": [
+      {
+        "capacity_keys": [
+          "spring.datasource.hikari.maximumPoolSize"
+        ],
+        "config_path": "config/application.json",
+        "kind": "pool_capacity",
+        "max_capacity": 54,
+        "min_capacity": 24,
+        "role": "goal"
+      },
+      {
+        "expected": 64,
+        "key": "max_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 10,
+        "key": "reserved_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 24,
+        "key": "server.tomcat.threads.max",
+        "kind": "value_unchanged",
+        "path": "config/application.json",
+        "role": "guard"
+      }
+    ],
+    "task_family": "pool",
+    "task_id": "hid-pool-hikari-02",
+    "tenant_id": "bench"
+  },
+  "variant": "hikari"
+}

@@ -1,0 +1,72 @@
+{
+  "environment": {
+    "files": {
+      "app/config.json": "{\n  \"server\": {\n    \"workers\": 4,\n    \"threads_per_worker\": 5\n  },\n  \"database\": {\n    \"url\": \"postgresql://app@db.internal/app\",\n    \"pool_size\": 5,\n    \"max_overflow\": 0,\n    \"pool_timeout_s\": 30\n  }\n}",
+      "infra/db.json": "{\n  \"engine\": \"postgres\",\n  \"max_connections\": 60,\n  \"reserved_connections\": 10\n}",
+      "logs/app.log": "2025-03-01T10:00:00Z INFO request ok route=/orders id=9617\n2025-03-01T10:00:01Z INFO request ok route=/orders id=3926\n2025-03-01T10:00:02Z INFO request ok route=/orders id=6869\n2025-03-01T10:00:03Z ERROR sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 0 reached, connection timed out, timeout 30.00\n2025-03-01T10:00:04Z ERROR sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 0 reached, connection timed out, timeout 30.00\n2025-03-01T10:00:05Z ERROR sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 0 reached, connection timed out, timeout 30.00\n2025-03-01T10:00:06Z INFO request ok route=/orders id=5293\n2025-03-01T10:00:07Z INFO request ok route=/orders id=8629\n2025-03-01T10:00:08Z INFO request ok route=/orders id=2381"
+    }
+  },
+  "family": "pool",
+  "task": {
+    "allowed_tools": [
+      "list_files",
+      "read_file",
+      "set_json_value"
+    ],
+    "context_refs": [],
+    "deadline_ms": 300000,
+    "inputs": {
+      "service": "orders-api"
+    },
+    "max_steps": 12,
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "objective": "The service intermittently fails with database connection-pool timeouts under load. Investigate the logs and configuration and fix the application configuration so the pool can serve the service's concurrent demand without exceeding the database's usable connection limit. Files under infra/ are managed by another team and must not change; do not reduce the service's concurrency to hide the problem.",
+    "risk_level": "low",
+    "success_criteria": [
+      {
+        "capacity_keys": [
+          "database.pool_size",
+          "database.max_overflow"
+        ],
+        "config_path": "app/config.json",
+        "kind": "pool_capacity",
+        "max_capacity": 50,
+        "min_capacity": 20,
+        "role": "goal"
+      },
+      {
+        "expected": 60,
+        "key": "max_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 10,
+        "key": "reserved_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 4,
+        "key": "server.workers",
+        "kind": "value_unchanged",
+        "path": "app/config.json",
+        "role": "guard"
+      },
+      {
+        "expected": 5,
+        "key": "server.threads_per_worker",
+        "kind": "value_unchanged",
+        "path": "app/config.json",
+        "role": "guard"
+      }
+    ],
+    "task_family": "pool",
+    "task_id": "val-pool-sqlalchemy-00",
+    "tenant_id": "bench"
+  },
+  "variant": "sqlalchemy"
+}

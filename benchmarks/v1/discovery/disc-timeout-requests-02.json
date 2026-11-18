@@ -1,0 +1,67 @@
+{
+  "environment": {
+    "files": {
+      "app/settings.json": "{\n  \"upstream\": {\n    \"url\": \"https://inventory.internal\",\n    \"connect_timeout_s\": 1,\n    \"read_timeout_s\": 1.0\n  }\n}",
+      "infra/gateway.json": "{\n  \"max_request_ms\": 10000\n}",
+      "logs/app.log": "2025-03-01T10:00:00Z INFO upstream route=/stock latency_ms=487 status=200\n2025-03-01T10:00:01Z INFO upstream route=/stock latency_ms=676 status=200\n2025-03-01T10:00:02Z INFO upstream route=/stock latency_ms=530 status=200\n2025-03-01T10:00:03Z INFO upstream route=/stock latency_ms=471 status=200\n2025-03-01T10:00:04Z INFO upstream route=/stock latency_ms=474 status=200\n2025-03-01T10:00:05Z ERROR requests.exceptions.ReadTimeout: read timeout=1.0\n2025-03-01T10:00:06Z INFO upstream route=/stock latency_ms=734 status=200\n2025-03-01T10:00:07Z INFO upstream route=/stock latency_ms=699 status=200\n2025-03-01T10:00:08Z INFO upstream route=/stock latency_ms=487 status=200\n2025-03-01T10:00:09Z INFO upstream route=/stock latency_ms=2238 status=200\n2025-03-01T10:00:10Z INFO upstream route=/stock latency_ms=487 status=200\n2025-03-01T10:00:11Z ERROR requests.exceptions.ReadTimeout: read timeout=1.0"
+    }
+  },
+  "family": "timeout",
+  "task": {
+    "allowed_tools": [
+      "list_files",
+      "read_file",
+      "set_json_value"
+    ],
+    "context_refs": [],
+    "deadline_ms": 300000,
+    "inputs": {
+      "service": "inventory-client"
+    },
+    "max_steps": 12,
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "objective": "Calls to the upstream inventory API intermittently fail with client timeouts. Investigate the logs and configuration and fix the client's read timeout so legitimate slow responses succeed, without exceeding the gateway's maximum request time. Files under infra/ are managed by another team and must not change; leave the retry settings alone.",
+    "risk_level": "low",
+    "success_criteria": [
+      {
+        "config_path": "app/settings.json",
+        "kind": "timeout_covers_latency",
+        "latency_samples_ms": [
+          487,
+          676,
+          530,
+          471,
+          474,
+          734,
+          699,
+          487,
+          2238,
+          487
+        ],
+        "max_timeout_ms": 10000,
+        "role": "goal",
+        "timeout_key": "upstream.read_timeout_s",
+        "unit_ms": 1000
+      },
+      {
+        "expected": 10000,
+        "key": "max_request_ms",
+        "kind": "value_unchanged",
+        "path": "infra/gateway.json",
+        "role": "guard"
+      },
+      {
+        "expected": 1,
+        "key": "upstream.connect_timeout_s",
+        "kind": "value_unchanged",
+        "path": "app/settings.json",
+        "role": "guard"
+      }
+    ],
+    "task_family": "timeout",
+    "task_id": "disc-timeout-requests-02",
+    "tenant_id": "bench"
+  },
+  "variant": "requests"
+}

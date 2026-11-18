@@ -1,0 +1,54 @@
+{
+  "dataset": "connection-debug-sim",
+  "generator_version": "gen/1",
+  "seed": 20260101,
+  "splits": {
+    "DISCOVERY": {
+      "content_hash": "8170dc437881ac06a5749426668efc806aa93c385e4d70f335ced959cada91cb",
+      "files": {
+        "disc-pool-psycopg_pool-00.json": "f88c5a2f003728a8a23960f22443c5a5e7ea098ed4725f3dbc34627b6f754dae",
+        "disc-pool-psycopg_pool-01.json": "45ea760f2e3dd81032bb3a7b35f5009a7faebe822e9e7eab8e0a5f80b79e92e8",
+        "disc-pool-psycopg_pool-02.json": "437db3568cb6125ffe2b6894739f28c5272635b7f85c96dc59eb4a39f5003e9f",
+        "disc-pool-sqlalchemy-00.json": "665ca0cef5b397c6b8089aeba973bc426eb5d02375fe85a53c603cf871dc9a15",
+        "disc-pool-sqlalchemy-01.json": "d840f8f2914408b0a2a2e0003cefb4d751506d7d8e87c4c94ae1d22d321d11be",
+        "disc-pool-sqlalchemy-02.json": "59f40ed73a8d4e9c226889d18462ba6c0d4cb7f534897c4ba2ea8e9189676be8",
+        "disc-timeout-httpx-00.json": "c556c5da9899d6b98bd300f7ae5ab8b72e1f99eb5e92fd2903b32ad4ba4e05c5",
+        "disc-timeout-httpx-01.json": "426d5cb233569ad1de18982181f178a7db6ea383a0a7a12addd4f18c8e41709e",
+        "disc-timeout-httpx-02.json": "0dc35943304fc446ad1f20e3a989dfa60521f395226bf128a36d5da83c77de25",
+        "disc-timeout-requests-00.json": "33367b8b2aeceb81f49c096b3e5a9ea73e4991afe014d56c34dfbec1c7d9d88a",
+        "disc-timeout-requests-01.json": "7c47ebfe40367db13f99bbac692be9aa03f597db3c744af2365e9fc3d5b936e3",
+        "disc-timeout-requests-02.json": "60c94ab6a30b2eebe15da276da7d2158b540dba98476f0e7eea38bec7666cae2"
+      },
+      "n_tasks": 12
+    },
+    "HIDDEN_TRANSFER": {
+      "content_hash": "e0efa6367a1bb8b0c34e32613532a1be0e2047bf6dfc7113270307aa71fdfd0c",
+      "files": {
+        "hid-pool-hikari-00.json": "307a7b2b3fddafdbd8f0169eec07b83f18d04f3a5fd3b3383e50d7fd628ced30",
+        "hid-pool-hikari-01.json": "68ae2d5cc340aaae39123f09f6e2af6466a4ca7d3dafd1e6929e5c0dc9bcc7b6",
+        "hid-pool-hikari-02.json": "7cfd0ecb94a3ce70db5803628c4369fd1aea8211fc5a95eea33c52930862ff5b",
+        "hid-pool-hikari-03.json": "7e934555150685de2d119736345cf2ef0df820686d18e6253627451d25380628",
+        "hid-timeout-okhttp-00.json": "a3b1b74584214139cf6defc6aa010516ea4e5e0318b90e1dffe59d33bff6630a",
+        "hid-timeout-okhttp-01.json": "faedd5c07844628c22c043949fd322858bd1782539a63d115a164abf9e33150f",
+        "hid-timeout-okhttp-02.json": "0c244bce8f050217f83c3620718fc2e2dee6a53d13fd15c8e120e1fb992dc630",
+        "hid-timeout-okhttp-03.json": "f7cbf766d52796ca383f3265d6d3fa62a3bc7b991baabaae29599d6d5063b1c4"
+      },
+      "n_tasks": 8
+    },
+    "VALIDATION": {
+      "content_hash": "0193090c4c31461b7acf04f6ea21c6ce3584d6052e16edc28defc673cbb37676",
+      "files": {
+        "val-pool-psycopg_pool-00.json": "5d71f6f2eb79ba9e2a4fc696fc1fbb104c4440245404b17dcfc51db4e7de6a5c",
+        "val-pool-psycopg_pool-01.json": "49b418c6e2061ed1cd6ad8fca58135edfcf9e7d0fa00f42a16c9bb28d25612e3",
+        "val-pool-sqlalchemy-00.json": "ef229f9ff4c5221e6e869d47fe6c6e198c5caa8b6b2310dfa0eb504b6b39b6dc",
+        "val-pool-sqlalchemy-01.json": "b12535e40ef6d76eba5381a7c551eada5cd8ae81672d43042b60231204a3d1fb",
+        "val-timeout-httpx-00.json": "07634ddae1350a345818ab0a139a0bdf75ebfedc3ba7ff0afd3df50783056da1",
+        "val-timeout-httpx-01.json": "9b29224f693de495c01a0283f8c20de9a587c5dd38c91582b25a9c245fddbd07",
+        "val-timeout-requests-00.json": "056fd9a09e2672ab3fb0e1986b353a7c913ccd182fcd8064eac24edc745061a4",
+        "val-timeout-requests-01.json": "3082ce4f294f9b543549f0edbbb2ff80db9fbaf712d79f0b9c72bfaf4a330a3a"
+      },
+      "n_tasks": 8
+    }
+  },
+  "version": "1.0.0"
+}
