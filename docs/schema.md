@@ -17,10 +17,17 @@ Conventions: PostgreSQL 16; ids are UUIDv7 (`uuid`); timestamps are `timestamptz
 | `learning_jobs` | queued learning work (M2 enqueues only) | unique `(tenant_id, job_type, dedupe_key)`; FK → `task_runs`; CHECK `eligible_for_success_mining ⇒ outcome_status = 'VERIFIED_SUCCESS'` |
 | `dead_letters` | visible record of poison/exhausted messages | `raw` ≤ 4096 chars; `tenant_id`/`event_id` nullable (poison payloads may lack them) |
 | `audit_log` | **append-only** audit (`run.started`, `run.completed`, `outbox.dead_lettered`, `outbox.requeued`) | indexed by `(tenant_id, entity_type, entity_id)` |
+| `experience_cases` (M3) | **append-only** derived learning view of one run: family, outcome, `dataset_split`, `eligible` / `excluded_reason`, features, trajectory artifact hash | unique `(tenant_id, run_id, pipeline_version)`; FK → `task_runs`; CHECK `eligible ⇒ discovery split (IS TRUE) ∧ outcome ∈ {VERIFIED_SUCCESS, FAILURE}`; CHECK excluded rows carry a reason |
+| `capabilities` (M3) | stable capability identity | PK `(tenant_id, capability_id)`; unique `(tenant_id, skeleton_signature)` |
+| `capability_versions` (M3) | immutable versions; M3 writes `CANDIDATE` only | unique `(tenant, capability, version)`; trigger: only `state` may change, no deletes; `definition_hash`, `procedure_hash`, `tests`, compiler/prompt/model versions |
+| `capability_evidence` (M3) | **append-only** source successes / counterexamples per version | unique `(tenant, capability, version, run, role)`; FKs → `task_runs`, `capability_versions` (tenant-scoped) |
+| `cost_ledger` (M3) | **append-only** learning/maintenance cost (wall ms, tokens, tool calls) per pipeline step | indexed `(tenant, pipeline)` |
+
+`task_runs.tags` (M3, jsonb) holds run provenance: `dataset_name`, `dataset_version`, `dataset_split`, `dataset_content_hash`, `variant`, `seed`. Missing/unknown provenance makes a run ineligible for learning.
 
 ## Immutability enforcement
 
-Triggers (`ee_reject_mutation`, `ee_policy_decision_guard`) reject `UPDATE`/`DELETE` on `trace_events`, `artifacts`, `run_outcomes`, `audit_log`, and anything but the one-time outcome back-fill on `policy_decisions`. **Limits:** superusers/table owners can still `TRUNCATE` or drop triggers. Production application roles must be granted only `SELECT, INSERT` (plus `UPDATE` on `task_runs`, `outbox_events`, `learning_jobs`, and `UPDATE(outcome_status)` on `policy_decisions`). Roles are not created by the migration (deployment concern, deferred).
+Triggers (`ee_reject_mutation`, `ee_policy_decision_guard`, `ee_capability_version_guard`) reject `UPDATE`/`DELETE` on `trace_events`, `artifacts`, `run_outcomes`, `audit_log`, `experience_cases`, `capability_evidence`, `cost_ledger`; allow only the one-time outcome back-fill on `policy_decisions`; and allow only `state` changes on `capability_versions`. **Limits:** superusers/table owners can still `TRUNCATE` or drop triggers. Production application roles must be granted only `SELECT, INSERT` (plus `UPDATE` on `task_runs`, `outbox_events`, `learning_jobs`, and `UPDATE(outcome_status)` on `policy_decisions`). Roles are not created by the migration (deployment concern, deferred).
 
 ## Large payloads
 

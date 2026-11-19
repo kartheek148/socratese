@@ -109,16 +109,19 @@ def generate_split(split: Split, seed: int = DEFAULT_SEED) -> list[BenchTask]:
     return tasks
 
 
-def write_dataset(root: Path, seed: int = DEFAULT_SEED) -> dict[str, object]:
+def _write_splits(
+    root: Path, seed: int, splits: list[Split], version: str, record_seed: bool
+) -> dict[str, object]:
     manifest: dict[str, object] = {
         "dataset": DATASET_NAME,
-        "version": DATASET_VERSION,
+        "version": version,
         "generator_version": GENERATOR_VERSION,
-        "seed": seed,
         "splits": {},
     }
-    splits: dict[str, object] = {}
-    for split in Split:
+    if record_seed:
+        manifest["seed"] = seed
+    entries: dict[str, object] = {}
+    for split in splits:
         directory = root / split.value.lower()
         directory.mkdir(parents=True, exist_ok=True)
         hashes: dict[str, str] = {}
@@ -127,31 +130,68 @@ def write_dataset(root: Path, seed: int = DEFAULT_SEED) -> dict[str, object]:
             name = f"{task.task.task_id}.json"
             (directory / name).write_text(text)
             hashes[name] = _sha(text)
-        splits[split.value] = {
+        entries[split.value] = {
             "n_tasks": len(hashes),
             "content_hash": _content_hash(hashes),
             "files": hashes,
         }
-    manifest["splits"] = splits
+    manifest["splits"] = entries
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return manifest
 
 
+def write_dataset(root: Path, seed: int = DEFAULT_SEED) -> dict[str, object]:
+    """Development dataset (all splits public). Its hidden split is *burned*: the data and the
+    seed are in git history, so it must only be used for baselines/regression, never as a hidden
+    evaluation set. Use `write_private_dataset` for real validation/transfer evaluation.
+    """
+    return _write_splits(root, seed, list(Split), DATASET_VERSION, record_seed=True)
+
+
+PRIVATE_SEED_ENV = "EE_PRIVATE_DATASET_SEED"
+PRIVATE_VERSION = f"{DATASET_VERSION}-private"
+
+
+def write_private_dataset(root: Path, seed: int) -> dict[str, object]:
+    """VALIDATION and HIDDEN_TRANSFER regenerated from a secret seed, written outside the repo.
+
+    The seed is never recorded in the manifest. Task numbers therefore cannot be reproduced from
+    repository contents (the families/variants remain visible in code; the values do not).
+    """
+    if seed == DEFAULT_SEED:
+        raise ValueError("the private seed must differ from the public development seed")
+    return _write_splits(
+        root, seed, [Split.VALIDATION, Split.HIDDEN_TRANSFER], PRIVATE_VERSION, record_seed=False
+    )
+
+
 class DatasetLoader:
-    def __init__(self, root: Path, access: EvaluatorAccess | None = None):
+    def __init__(
+        self,
+        root: Path,
+        access: EvaluatorAccess | None = None,
+        private_root: Path | None = None,
+    ):
         self._root = root
         self._access = access
+        self._private_root = private_root
 
-    def manifest(self) -> dict[str, object]:
-        data: dict[str, object] = json.loads((self._root / "manifest.json").read_text())
+    def _root_for(self, split: Split) -> Path:
+        if split != Split.DISCOVERY and self._private_root is not None:
+            return self._private_root
+        return self._root
+
+    def manifest(self, split: Split = Split.DISCOVERY) -> dict[str, object]:
+        data: dict[str, object] = json.loads((self._root_for(split) / "manifest.json").read_text())
         return data
 
     def load(self, split: Split) -> LoadedSplit:
         if split != Split.DISCOVERY and self._access is None:
             raise SplitAccessError(f"{split.value} requires evaluator access")
-        manifest = self.manifest()
+        root = self._root_for(split)
+        manifest = self.manifest(split)
         entry = manifest["splits"][split.value]  # type: ignore[index]
-        directory = self._root / split.value.lower()
+        directory = root / split.value.lower()
         actual: dict[str, str] = {}
         tasks: list[BenchTask] = []
         for path in sorted(directory.glob("*.json")):

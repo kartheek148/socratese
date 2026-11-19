@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 ee-bench = "experience_engine.cli:main"
 ee-relay = "experience_engine.adapters.mq.relay_cli:main"
+ee-learn = "experience_engine.learn_cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]

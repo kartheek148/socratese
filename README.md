@@ -25,7 +25,7 @@ uv run pytest                      # creates/drops its own database and uniquely
 docker compose -f deploy/docker-compose.yml -p ee-test down
 ```
 
-Benchmark and baseline: [docs/benchmark.md](docs/benchmark.md). Data model: [docs/schema.md](docs/schema.md). Events, outbox and messaging: [docs/events.md](docs/events.md).
+Benchmark and baseline: [docs/benchmark.md](docs/benchmark.md). Data model: [docs/schema.md](docs/schema.md). Events, outbox and messaging: [docs/events.md](docs/events.md). Capabilities, DSL and the candidate compiler (`ee-learn`): [docs/capabilities.md](docs/capabilities.md).
 
 ## How to use
 

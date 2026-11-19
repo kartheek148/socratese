@@ -6,6 +6,8 @@
 
 > **Milestone 2 contract changes:** new `TraceEvent`/`ArtifactRef`, `RunRecord`, `OutboxEvent`, `ExecutionCompletedPayload` and `LearningJob` contracts; tables, triggers and the event flow are documented in [schema.md](./schema.md) and [events.md](./events.md); decisions in [ADR 0005](./decisions/0005-m2-persistence-outbox-messaging.md).
 
+> **Milestone 3 contract changes:** capability DSL/schema, `Trajectory`/`ExperienceCase`, run provenance tags and migration `0002`; see [capabilities.md](./capabilities.md), [schema.md](./schema.md) and [ADR 0006](./decisions/0006-m3-experience-and-capability-candidates.md).
+
 ## 1. Objective and non-goals
 
 ### Objective

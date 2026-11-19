@@ -104,6 +104,7 @@ class SqlRunLifecycle:
                     runtime_version=run.runtime_version,
                     analyzer_version=run.analyzer_version,
                     model_settings=run.model_settings,
+                    tags=run.tags,
                     status=RunStatus.RUNNING.value,
                     started_at=run.started_at,
                 )

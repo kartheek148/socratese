@@ -15,6 +15,6 @@ Status: Accepted (review of Milestone 0, 2026-11-18)
 
 ## Deviations from the Milestone 0 plan
 - `execution/analyzer.py` and `execution/context.py` are not created in M1; nothing consumes them until M5–M7.
-- Hidden-split protection in M1 is an in-repo guard only. **Open item before M3:** move `HIDDEN_TRANSFER` (and preferably `VALIDATION`) out of the repository tree into storage unreadable by the learning plane.
+- Hidden-split protection in M1 is an in-repo guard only. **Open item before M3:** move `HIDDEN_TRANSFER` (and preferably `VALIDATION`) out of the repository tree into storage unreadable by the learning plane. *(Addressed in M3 by ADR 0006 §4: v1 declared burned; private seeded splits outside the repo; partial — see that ADR.)*
 - `RunOutcome.verification_results` is a typed `VerificationResult` list (not `list[dict]`), and `RunOutcome` gains `task_id`, `tenant_id`, `config_id`, `policy_version`, `capability_version` (gap G1).
 - `TaskSpec.success_criteria` is a discriminated union with `goal`/`guard` roles (gap G1).

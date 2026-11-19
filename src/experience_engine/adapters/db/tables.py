@@ -50,6 +50,7 @@ task_runs = sa.Table(
     sa.Column("runtime_version", sa.Text, nullable=False),
     sa.Column("analyzer_version", sa.Text),
     sa.Column("model_settings", JSONB, nullable=False),
+    sa.Column("tags", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("status", sa.Text, nullable=False),
     sa.Column("started_at", _ts(), nullable=False),
     sa.Column("ended_at", _ts()),
@@ -243,4 +244,141 @@ audit_log = sa.Table(
     ),
 )
 
-APPEND_ONLY_TABLES = ("trace_events", "run_outcomes", "audit_log", "artifacts")
+experience_cases = sa.Table(
+    "experience_cases",
+    metadata,
+    sa.Column("case_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("run_id", _uuid(), nullable=False),
+    sa.Column("task_id", sa.Text, nullable=False),
+    sa.Column("pipeline_version", sa.Text, nullable=False),
+    sa.Column("task_family", sa.Text),
+    sa.Column("outcome_status", sa.Text, nullable=False),
+    sa.Column("dataset_split", sa.Text),
+    sa.Column("eligible", sa.Boolean, nullable=False),
+    sa.Column("excluded_reason", sa.Text),
+    sa.Column("features", JSONB, nullable=False),
+    sa.Column("trajectory_sha256", sa.Text),
+    sa.Column("n_steps", sa.Integer, nullable=False),
+    sa.Column("tokens_used", sa.Integer, nullable=False),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.UniqueConstraint("tenant_id", "run_id", "pipeline_version"),
+    sa.ForeignKeyConstraint(["tenant_id", "run_id"], ["task_runs.tenant_id", "task_runs.run_id"]),
+    sa.CheckConstraint(
+        "outcome_status IN ('VERIFIED_SUCCESS','FAILURE','PARTIAL','UNKNOWN')",
+        name="outcome_status",
+    ),
+    sa.CheckConstraint("eligible OR excluded_reason IS NOT NULL", name="exclusion_has_reason"),
+    # Database-level guard for the learning boundary: only discovery runs with a verified
+    # success/failure outcome can ever be marked eligible. `IS TRUE` matters: a NULL split
+    # would otherwise evaluate to NULL, which a CHECK constraint treats as passing.
+    sa.CheckConstraint(
+        "NOT eligible OR ((dataset_split = 'DISCOVERY') IS TRUE "
+        "AND outcome_status IN ('VERIFIED_SUCCESS','FAILURE'))",
+        name="eligible_requires_discovery",
+    ),
+    sa.Index("ix_experience_cases_tenant_id_task_family", "tenant_id", "task_family"),
+)
+
+capabilities = sa.Table(
+    "capabilities",
+    metadata,
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("capability_id", sa.Text, nullable=False),
+    sa.Column("task_family", sa.Text, nullable=False),
+    sa.Column("skeleton_signature", sa.Text, nullable=False),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.PrimaryKeyConstraint("tenant_id", "capability_id"),
+    sa.UniqueConstraint("tenant_id", "skeleton_signature"),
+)
+
+CAPABILITY_STATES = (
+    "DISCOVERED",
+    "CANDIDATE",
+    "VALIDATING",
+    "APPROVED",
+    "SHADOW",
+    "CANARY",
+    "ACTIVE",
+    "REJECTED",
+    "DEPRECATED",
+    "ROLLED_BACK",
+)
+
+capability_versions = sa.Table(
+    "capability_versions",
+    metadata,
+    sa.Column("version_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("capability_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("state", sa.Text, nullable=False),
+    sa.Column("definition", JSONB, nullable=False),
+    sa.Column("definition_hash", sa.Text, nullable=False),
+    sa.Column("procedure_hash", sa.Text, nullable=False),
+    sa.Column("tests", JSONB, nullable=False),
+    sa.Column("compiler_version", sa.Text, nullable=False),
+    sa.Column("prompt_version", sa.Text),
+    sa.Column("model_version", sa.Text),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.UniqueConstraint("tenant_id", "capability_id", "version"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "capability_id"], ["capabilities.tenant_id", "capabilities.capability_id"]
+    ),
+    sa.CheckConstraint(
+        "state IN (" + ",".join(f"'{s}'" for s in CAPABILITY_STATES) + ")", name="state"
+    ),
+    sa.CheckConstraint("version >= 1", name="version_positive"),
+    sa.Index("ix_capability_versions_tenant_id_state", "tenant_id", "state"),
+)
+
+capability_evidence = sa.Table(
+    "capability_evidence",
+    metadata,
+    sa.Column("evidence_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("capability_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("run_id", _uuid(), nullable=False),
+    sa.Column("role", sa.Text, nullable=False),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.UniqueConstraint(
+        "tenant_id", "capability_id", "version", "run_id", "role", name="uq_capability_evidence_key"
+    ),
+    sa.ForeignKeyConstraint(["tenant_id", "run_id"], ["task_runs.tenant_id", "task_runs.run_id"]),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "capability_id", "version"],
+        [
+            "capability_versions.tenant_id",
+            "capability_versions.capability_id",
+            "capability_versions.version",
+        ],
+    ),
+    sa.CheckConstraint("role IN ('SOURCE_SUCCESS','COUNTEREXAMPLE')", name="role"),
+)
+
+cost_ledger = sa.Table(
+    "cost_ledger",
+    metadata,
+    sa.Column("entry_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("pipeline", sa.Text, nullable=False),
+    sa.Column("subject_type", sa.Text, nullable=False),
+    sa.Column("subject_id", sa.Text, nullable=False),
+    sa.Column("tokens", sa.Integer, nullable=False),
+    sa.Column("tool_calls", sa.Integer, nullable=False),
+    sa.Column("wall_ms", sa.Integer, nullable=False),
+    sa.Column("correlation_id", sa.Text, nullable=False),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.Index("ix_cost_ledger_tenant_id_pipeline", "tenant_id", "pipeline"),
+)
+
+APPEND_ONLY_TABLES = (
+    "trace_events",
+    "run_outcomes",
+    "audit_log",
+    "artifacts",
+    "experience_cases",
+    "capability_evidence",
+    "cost_ledger",
+)

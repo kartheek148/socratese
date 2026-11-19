@@ -71,3 +71,54 @@ def test_every_task_is_solvable_in_principle() -> None:
                     assert crit.min_capacity <= crit.max_capacity
                 if crit.kind == "timeout_covers_latency":
                     assert max(crit.latency_samples_ms) <= crit.max_timeout_ms
+
+
+# ---- private evaluation data (ADR 0004 open item) ---------------------------------------------
+def test_private_splits_are_secret_seeded_separate_and_loadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from experience_engine.bench.dataset import write_private_dataset
+
+    private = tmp_path / "private"
+    manifest = write_private_dataset(private, seed=987654321)
+    assert "seed" not in manifest and manifest["version"].endswith("-private")  # type: ignore[union-attr]
+    assert sorted(p.name for p in private.iterdir()) == [
+        "hidden_transfer",
+        "manifest.json",
+        "validation",
+    ]
+
+    monkeypatch.setenv("EE_EVALUATOR_ROLE", "evaluator")
+    loader = DatasetLoader(COMMITTED, EvaluatorAccess.from_env(), private_root=private)
+    hidden = loader.load(Split.HIDDEN_TRANSFER)
+    public_hidden = DatasetLoader(COMMITTED, EvaluatorAccess()).load(Split.HIDDEN_TRANSFER)
+    assert hidden.version.n_tasks == public_hidden.version.n_tasks
+    assert hidden.version.content_hash != public_hidden.version.content_hash  # values differ
+    assert hidden.version.version.endswith("-private")
+    # discovery always comes from the public root and is unchanged
+    assert loader.load(Split.DISCOVERY).version.content_hash == (
+        DatasetLoader(COMMITTED).load(Split.DISCOVERY).version.content_hash
+    )
+    # private data still needs the evaluator capability
+    with pytest.raises(SplitAccessError):
+        DatasetLoader(COMMITTED, None, private_root=private).load(Split.VALIDATION)
+
+
+def test_private_seed_must_not_be_the_public_one(tmp_path: Path) -> None:
+    from experience_engine.bench.dataset import write_private_dataset
+
+    with pytest.raises(ValueError, match="differ"):
+        write_private_dataset(tmp_path, DEFAULT_SEED)
+
+
+def test_cli_refuses_private_data_inside_the_repository_or_without_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from experience_engine.cli import main
+
+    monkeypatch.delenv("EE_PRIVATE_DATASET_SEED", raising=False)
+    assert main(["generate", "--private", "--root", str(tmp_path / "p")]) == 2  # no seed
+    monkeypatch.setenv("EE_PRIVATE_DATASET_SEED", "424242")
+    assert main(["generate", "--private", "--root", str(COMMITTED.parent / "private-tmp")]) == 2
+    assert not (COMMITTED.parent / "private-tmp").exists()
+    assert main(["generate", "--private", "--root", str(tmp_path / "p")]) == 0

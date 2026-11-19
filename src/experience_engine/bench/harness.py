@@ -51,7 +51,19 @@ def run_benchmark(
     for bench_task in tasks:
         task = bench_task.task
         session = SimulatedEnvironment(bench_task.environment, task.allowed_tools)
-        result = orchestrator.execute(task, session, llm_factory(bench_task, seed))
+        result = orchestrator.execute(
+            task,
+            session,
+            llm_factory(bench_task, seed),
+            run_tags={
+                "dataset_name": dataset.name,
+                "dataset_version": dataset.version,
+                "dataset_split": dataset.split.value,
+                "dataset_content_hash": dataset.content_hash,
+                "variant": bench_task.variant,
+                "seed": str(seed),
+            },
+        )
         record = BenchmarkRunRecord(
             tenant_id=task.tenant_id,
             run_id=result.run_id,

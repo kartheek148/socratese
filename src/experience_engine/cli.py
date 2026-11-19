@@ -18,9 +18,11 @@ from experience_engine.adapters.llm.vertex import (
 from experience_engine.adapters.results import JsonlResultStore
 from experience_engine.bench.dataset import (
     DEFAULT_SEED,
+    PRIVATE_SEED_ENV,
     DatasetLoader,
     EvaluatorAccess,
     write_dataset,
+    write_private_dataset,
 )
 from experience_engine.bench.harness import LLMFactory, run_benchmark
 from experience_engine.bench.report import compare_runs, render_report, summarize
@@ -39,6 +41,25 @@ def _load_records(path: Path) -> list[BenchmarkRunRecord]:
 
 
 def _cmd_generate(args: argparse.Namespace) -> int:
+    if args.private:
+        seed_text = os.environ.get(PRIVATE_SEED_ENV)
+        if not seed_text:
+            print(f"set {PRIVATE_SEED_ENV} to a secret integer seed", file=sys.stderr)
+            return 2
+        root = Path(args.root)
+        repo = Path(__file__).resolve().parents[2]
+        if repo in (root.resolve(), *root.resolve().parents):
+            print(
+                "refusing to write private evaluation data inside the repository", file=sys.stderr
+            )
+            return 2
+        try:
+            manifest = write_private_dataset(root, int(seed_text))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(f"wrote private splits {manifest['dataset']} v{manifest['version']} to {root}")
+        return 0
     manifest = write_dataset(Path(args.root), args.seed)
     print(f"wrote dataset {manifest['dataset']} v{manifest['version']} to {args.root}")
     return 0
@@ -50,7 +71,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"refusing to append to existing {out}; choose a new --out", file=sys.stderr)
         return 2
     splits = list(Split) if args.split == "all" else [Split(args.split.upper())]
-    loader = DatasetLoader(Path(args.root), EvaluatorAccess.from_env())
+    loader = DatasetLoader(
+        Path(args.root),
+        EvaluatorAccess.from_env(),
+        private_root=Path(args.private_root) if args.private_root else None,
+    )
 
     llm_factory: LLMFactory
     known_secrets: list[str] = []
@@ -145,10 +170,20 @@ def main(argv: list[str] | None = None) -> int:
     gen = sub.add_parser("generate", help="(re)generate the versioned dataset")
     gen.add_argument("--root", default="benchmarks/v1")
     gen.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    gen.add_argument(
+        "--private",
+        action="store_true",
+        help=f"write validation/hidden splits from the secret seed in ${PRIVATE_SEED_ENV}",
+    )
     gen.set_defaults(func=_cmd_generate)
 
     run = sub.add_parser("run", help="run the baseline (needs EE_EVALUATOR_ROLE=evaluator)")
     run.add_argument("--root", default="benchmarks/v1")
+    run.add_argument(
+        "--private-root",
+        default=os.environ.get("EE_PRIVATE_DATASET_ROOT"),
+        help="directory holding private validation/hidden splits (outside the repository)",
+    )
     run.add_argument(
         "--split", choices=["all", "discovery", "validation", "hidden_transfer"], default="all"
     )

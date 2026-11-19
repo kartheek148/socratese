@@ -64,6 +64,19 @@ uv run ee-bench run --llm openai --seed 0 --out runs/real-seed0.jsonl
 
 Run-output directory `runs/` is git-ignored. Provider failures retry twice with backoff, then end the run as `LLM_ERROR` → `UNKNOWN`. Providers are not bit-deterministic even at temperature 0; run several seeds and compare outcome rates with the Wilson intervals in the report rather than expecting identical digests.
 
+## Protecting validation and hidden-transfer data
+
+The committed `benchmarks/v1` is a **development set**: all its splits and its seed are in git history, so its hidden split is burned for evaluation purposes (fine for baselines and regression). For real validation/transfer evaluation generate private splits from a secret seed into a directory *outside* the repository and point runs at it:
+
+```
+export EE_PRIVATE_DATASET_SEED=<secret integer, not the public seed>
+uv run ee-bench generate --private --root /secure/path/ee-private      # refuses repo paths / missing seed
+export EE_EVALUATOR_ROLE=evaluator EE_PRIVATE_DATASET_ROOT=/secure/path/ee-private
+uv run ee-bench run --llm vertex --split all --out runs/private-eval.jsonl
+```
+
+The seed is never written to the manifest; private manifests are versioned `…-private`. Learning-plane code (`learning/`, `capabilities/`, `ee-learn`) cannot import the benchmark package and refuses to run with evaluator access. Remaining gap: the task *families/variants* are visible in code (only their numeric values are secret), and OS-level separation of the private directory is a deployment concern.
+
 ## What is recorded per run (`BenchmarkRunRecord`)
 
 Dataset name/version/split/content hash, seed, agent config (prompt version, provider, model, temperature, seed), runtime/verifier/environment/policy versions, the controller decision (eligible set, selection, probability, reason, back-filled verified outcome), verification results with detail, tokens, tool calls, latency, human interventions, termination reason, whether the agent claimed completion, and bounded step summaries (size + sha256, never raw payloads). `digest()` hashes all deterministic fields (excludes IDs, timestamps, latency).

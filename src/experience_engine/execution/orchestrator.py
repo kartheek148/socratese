@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from experience_engine import RUNTIME_VERSION
@@ -73,7 +74,13 @@ class TaskOrchestrator:
         self._artifacts = artifacts
         self._redactor = redactor or Redactor()
 
-    def execute(self, task: TaskSpec, session: EnvironmentSession, llm: LLMClient) -> RunResult:
+    def execute(
+        self,
+        task: TaskSpec,
+        session: EnvironmentSession,
+        llm: LLMClient,
+        run_tags: Mapping[str, str] | None = None,
+    ) -> RunResult:
         run_id = new_id()
         started_at = self._clock.now()
         t0 = self._clock.monotonic_ms()
@@ -97,6 +104,7 @@ class TaskOrchestrator:
                     policy_version=decision.policy_version,
                     runtime_version=RUNTIME_VERSION,
                     model_settings=self._config.model.model_dump(mode="json"),
+                    tags=dict(run_tags or {}),
                     started_at=started_at,
                 ),
             )

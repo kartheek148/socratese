@@ -23,6 +23,8 @@ class RunRecord(BaseModel):
     runtime_version: str
     analyzer_version: str | None = None
     model_settings: dict[str, object] = Field(default_factory=dict)
+    # Provenance such as dataset name/version/split. Learning requires a known split (rule 9).
+    tags: dict[str, str] = Field(default_factory=dict)
     status: RunStatus = RunStatus.RUNNING
     started_at: UtcDatetime
     ended_at: UtcDatetime | None = None

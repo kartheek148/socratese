@@ -89,7 +89,8 @@ def engine(database_url: str) -> Iterator[Engine]:
             sa.text(
                 "TRUNCATE tasks, task_runs, artifacts, trace_events, run_outcomes, "
                 "policy_decisions, outbox_events, consumed_events, learning_jobs, "
-                "dead_letters, audit_log CASCADE"
+                "dead_letters, audit_log, experience_cases, capabilities, capability_versions, "
+                "capability_evidence, cost_ledger CASCADE"
             )
         )
     yield eng
