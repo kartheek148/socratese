@@ -34,6 +34,7 @@ export EE_EVALUATOR_ROLE=evaluator                        # required to read val
 uv run ee-bench run --llm fake --out runs/a.jsonl         # scripted FakeLLM (harness validation)
 uv run ee-bench report --runs runs/a.jsonl --out docs/baseline-report.md
 uv run ee-bench compare runs/a.jsonl runs/b.jsonl         # exit 0 only if every digest matches
+uv run ee-bench run --llm fake --persist --out runs/p.jsonl   # M2: also persist traces/outcomes/outbox (see events.md)
 ```
 
 ### Real model

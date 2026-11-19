@@ -1,0 +1,35 @@
+# Development/test infrastructure only. Credentials below are throwaway dev defaults, bound to
+# loopback. Override via environment; never reuse them outside a developer machine.
+#
+#   docker compose -f deploy/docker-compose.yml -p ee up -d --wait
+#   EE_PG_PORT=55432 EE_AMQP_PORT=56720 docker compose -f deploy/docker-compose.yml -p ee-m2 up -d --wait
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${EE_PG_USER:-ee}
+      POSTGRES_PASSWORD: ${EE_PG_PASSWORD:-ee_dev_password}
+      POSTGRES_DB: ${EE_PG_DB:-ee}
+    ports:
+      - "127.0.0.1:${EE_PG_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EE_PG_USER:-ee}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${EE_AMQP_USER:-ee}
+      RABBITMQ_DEFAULT_PASS: ${EE_AMQP_PASSWORD:-ee_dev_password}
+    ports:
+      - "127.0.0.1:${EE_AMQP_PORT:-5672}:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 40
+      start_period: 150s

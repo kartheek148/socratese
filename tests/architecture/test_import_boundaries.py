@@ -25,11 +25,12 @@ FORBIDDEN = {
     "subprocess",
     "sqlite3",
 }
-PURE = ["domain", "ports", "execution", "bench"]
+PURE = ["domain", "ports", "execution", "learning", "bench"]
 ALLOWED_INTERNAL = {
     "domain": {"domain"},
     "ports": {"domain", "ports"},
     "execution": {"domain", "ports", "execution"},
+    "learning": {"domain", "ports", "learning"},
     "bench": {"domain", "ports", "execution", "bench"},
 }
 

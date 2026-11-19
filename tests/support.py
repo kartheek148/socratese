@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from experience_engine.bench.dataset import DEFAULT_SEED, BenchTask, generate_split
 from experience_engine.bench.environment import SimulatedEnvironment
+from experience_engine.bench.verifier import SimulationVerifier
 from experience_engine.domain.benchmark import AgentConfig, ModelSettings, Split
 from experience_engine.execution.controller import FixedPolicy
 from experience_engine.execution.orchestrator import TaskOrchestrator
@@ -64,6 +65,56 @@ def orchestrator(clock: FakeClock, verifier: object) -> TaskOrchestrator:
 
 def session(task: BenchTask) -> SimulatedEnvironment:
     return SimulatedEnvironment(task.environment, task.task.allowed_tools)
+
+
+class InMemoryLifecycle:
+    """RunLifecycle fake for unit tests (no tenant FK enforcement, no atomicity)."""
+
+    def __init__(self) -> None:
+        self.runs: list[object] = []
+        self.events: list[object] = []
+        self.artifacts: list[tuple[str, object, str]] = []
+        self.decisions: list[object] = []
+        self.completed: list[tuple[object, object, object, object]] = []
+
+    def start_run(self, task: object, run: object) -> None:
+        self.runs.append(run)
+
+    def register_artifact(self, tenant_id: str, ref: object, uri: str) -> None:
+        self.artifacts.append((tenant_id, ref, uri))
+
+    def append_event(self, event: object) -> None:
+        self.events.append(event)
+
+    def record_decision(self, decision: object) -> None:
+        self.decisions.append(decision)
+
+    def complete_run(
+        self, outcome: object, decision: object, ended_at: object, outbox: object
+    ) -> None:
+        self.completed.append((outcome, decision, ended_at, outbox))
+
+
+def persisted_orchestrator(clock: FakeClock, lifecycle: object, artifacts: object, **kw: object):  # type: ignore[no-untyped-def]
+    return TaskOrchestrator(
+        controller=FixedPolicy(),
+        verifier=SimulationVerifier(),
+        clock=clock,
+        config=config(),
+        lifecycle=lifecycle,  # type: ignore[arg-type]
+        artifacts=artifacts,  # type: ignore[arg-type]
+        **kw,  # type: ignore[arg-type]
+    )
+
+
+def run_persisted(task, replies, lifecycle, artifacts, tenant=None, **kw):  # type: ignore[no-untyped-def]
+    """Execute one task through a persisting orchestrator; returns the RunResult."""
+    spec = task.task if tenant is None else task.task.model_copy(update={"tenant_id": tenant})
+    clock = FakeClock()
+    llm = ScriptedLLM(list(replies), clock)
+    return persisted_orchestrator(clock, lifecycle, artifacts, **kw).execute(
+        spec, session(task), llm
+    )
 
 
 def correct_pool_fix(task: BenchTask) -> list[object]:

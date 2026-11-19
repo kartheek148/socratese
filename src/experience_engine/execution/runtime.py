@@ -2,10 +2,11 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
+from experience_engine import RUNTIME_VERSION
 from experience_engine.domain.benchmark import AgentConfig
 from experience_engine.domain.outcome import TerminationReason
 from experience_engine.domain.task import TaskSpec
-from experience_engine.domain.trace import StepRecord
+from experience_engine.domain.trace import StepRecord, TraceEventType
 from experience_engine.execution.protocol import (
     EscalateAction,
     FinalAction,
@@ -16,11 +17,14 @@ from experience_engine.execution.protocol import (
     parse_action,
     system_prompt,
 )
+from experience_engine.execution.recorder import NullTraceSink
 from experience_engine.ports.clock import Clock
 from experience_engine.ports.llm import ChatMessage, LLMClient, LLMError, LLMRequest
 from experience_engine.ports.tools import ToolGateway, ToolNotAllowedError
+from experience_engine.ports.tracing import EmitSpec, Payload, TraceSink
 
 MAX_CONSECUTIVE_INVALID = 2
+_JSON = "application/json"
 
 
 @dataclass
@@ -37,14 +41,31 @@ class RuntimeResult:
 class AgentRuntime:
     """Bounded general-planning loop. Enforces step, tool-call, token and deadline budgets."""
 
-    def __init__(self, llm: LLMClient, tools: ToolGateway, clock: Clock, config: AgentConfig):
+    def __init__(
+        self,
+        llm: LLMClient,
+        tools: ToolGateway,
+        clock: Clock,
+        config: AgentConfig,
+        trace: TraceSink | None = None,
+    ):
         self._llm = llm
         self._tools = tools
         self._clock = clock
         self._config = config
+        self._trace: TraceSink = trace or NullTraceSink()
 
-    def run(self, task: TaskSpec) -> RuntimeResult:
+    def _emit(self, spec: EmitSpec) -> str:
+        return self._trace.emit(spec)
+
+    @staticmethod
+    def _request_payload(messages: list[ChatMessage]) -> Payload:
+        return Payload(json.dumps([m.model_dump() for m in messages]), _JSON)
+
+    def run(self, task: TaskSpec, parent_event_id: str | None = None) -> RuntimeResult:
         result = RuntimeResult(termination=TerminationReason.FINAL)
+        last_event = parent_event_id
+
         messages = [
             ChatMessage(role="system", content=system_prompt(self._tools.describe())),
             ChatMessage(
@@ -71,10 +92,43 @@ class AgentRuntime:
                     LLMRequest(messages=messages, model=self._config.model)
                 )
             except LLMError as exc:
+                self._emit(
+                    EmitSpec(
+                        type=TraceEventType.MODEL_CALL,
+                        component="llm",
+                        component_version=self._config.model.model,
+                        action="complete",
+                        status="error",
+                        metrics={"step": llm_steps, "error": str(exc)[:200]},
+                        payloads={"request": self._request_payload(messages)},
+                        parent_event_id=last_event,
+                    )
+                )
                 return stop(TerminationReason.LLM_ERROR, f"llm error: {str(exc)[:200]}")
             llm_steps += 1
             used = response.prompt_tokens + response.completion_tokens
             result.tokens_used += used
+            model_event = self._emit(
+                EmitSpec(
+                    type=TraceEventType.MODEL_CALL,
+                    component="llm",
+                    component_version=self._config.model.model,
+                    action="complete",
+                    status="ok",
+                    metrics={
+                        "step": llm_steps,
+                        "prompt_tokens": response.prompt_tokens,
+                        "completion_tokens": response.completion_tokens,
+                        "prompt_version": self._config.prompt_version,
+                    },
+                    payloads={
+                        "request": self._request_payload(messages),
+                        "response": Payload(response.text),
+                    },
+                    parent_event_id=last_event,
+                )
+            )
+            last_event = model_event
             result.steps.append(
                 StepRecord(
                     index=len(result.steps),
@@ -95,7 +149,19 @@ class AgentRuntime:
                 action = parse_action(response.text)
             except InvalidActionError as exc:
                 invalid_streak += 1
-                if invalid_streak >= MAX_CONSECUTIVE_INVALID:
+                fatal = invalid_streak >= MAX_CONSECUTIVE_INVALID
+                last_event = self._emit(
+                    EmitSpec(
+                        type=TraceEventType.INVALID_ACTION,
+                        component="runtime",
+                        component_version=RUNTIME_VERSION,
+                        action="parse_action",
+                        status="fatal" if fatal else "retry",
+                        metrics={"error": str(exc)[:200], "streak": invalid_streak},
+                        parent_event_id=last_event,
+                    )
+                )
+                if fatal:
                     return stop(TerminationReason.INVALID_ACTION, f"invalid action: {exc}")
                 messages.append(ChatMessage(role="user", content=format_error(str(exc))))
                 continue
@@ -119,9 +185,36 @@ class AgentRuntime:
             try:
                 tool_result = self._tools.call(action.tool, action.args)
             except ToolNotAllowedError as exc:
+                self._emit(
+                    EmitSpec(
+                        type=TraceEventType.TOOL_CALL,
+                        component="tool_gateway",
+                        component_version=RUNTIME_VERSION,
+                        action=action.tool[:100],
+                        status="denied",
+                        metrics={"reason": str(exc)[:200]},
+                        payloads={"args": Payload(json.dumps(action.args, sort_keys=True), _JSON)},
+                        parent_event_id=last_event,
+                    )
+                )
                 return stop(TerminationReason.TOOL_NOT_ALLOWED, str(exc)[:200])
             result.tool_calls += 1
             payload = tool_result.output.encode()
+            last_event = self._emit(
+                EmitSpec(
+                    type=TraceEventType.TOOL_CALL,
+                    component="tool_gateway",
+                    component_version=RUNTIME_VERSION,
+                    action=action.tool[:100],
+                    status="ok" if tool_result.ok else "failed",
+                    metrics={"output_bytes": len(payload)},
+                    payloads={
+                        "args": Payload(json.dumps(action.args, sort_keys=True), _JSON),
+                        "output": Payload(tool_result.output),
+                    },
+                    parent_event_id=last_event,
+                )
+            )
             result.steps.append(
                 StepRecord(
                     index=len(result.steps),

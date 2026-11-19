@@ -4,6 +4,8 @@
 
 > **Milestone 1 contract changes:** `RunOutcome` additionally carries `task_id`, `tenant_id`, `config_id`, `policy_version`, `capability_version` and typed `verification_results`; `TaskSpec.success_criteria` is a typed discriminated union whose items have a `goal`/`guard` role and are never shown to the agent; `ControllerDecision` and `BenchmarkRunRecord` are new domain contracts (`src/experience_engine/domain/`). Review decisions: [ADR 0004](./decisions/0004-milestone-0-review-decisions.md). Benchmark and commands: [benchmark.md](./benchmark.md).
 
+> **Milestone 2 contract changes:** new `TraceEvent`/`ArtifactRef`, `RunRecord`, `OutboxEvent`, `ExecutionCompletedPayload` and `LearningJob` contracts; tables, triggers and the event flow are documented in [schema.md](./schema.md) and [events.md](./events.md); decisions in [ADR 0005](./decisions/0005-m2-persistence-outbox-messaging.md).
+
 ## 1. Objective and non-goals
 
 ### Objective

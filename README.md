@@ -9,16 +9,23 @@ This package contains a repository-ready starting point for implementing an Expe
 - `docs/architecture.md` — system architecture, components, interfaces, data model, execution flows, safety, and measurement.
 - `docs/implementation-roadmap.md` — milestone plan and acceptance criteria.
 
-## Development (Milestone 1)
+## Development (Milestones 1-2)
 
 ```
 uv sync
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src
-uv run pytest
+uv run pytest                      # unit/regression/architecture; integration + migration skip without infra
+
+# Integration + migration tests need PostgreSQL and RabbitMQ (Docker):
+EE_PG_PORT=55432 EE_AMQP_PORT=56720 docker compose -f deploy/docker-compose.yml -p ee-test up -d --wait
+export EE_TEST_DATABASE_URL=postgresql+psycopg://ee:ee_dev_password@127.0.0.1:55432/postgres
+export EE_TEST_AMQP_URL=amqp://ee:ee_dev_password@127.0.0.1:56720//
+uv run pytest                      # creates/drops its own database and uniquely named queues
+docker compose -f deploy/docker-compose.yml -p ee-test down
 ```
 
-Benchmark and baseline: see [docs/benchmark.md](docs/benchmark.md).
+Benchmark and baseline: [docs/benchmark.md](docs/benchmark.md). Data model: [docs/schema.md](docs/schema.md). Events, outbox and messaging: [docs/events.md](docs/events.md).
 
 ## How to use
 

@@ -3,10 +3,17 @@ name = "experience-engine"
 version = "0.1.0"
 description = "Experience-driven self-improving agent (Milestone 1: baseline agent and benchmark)"
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2.7,<3"]
+dependencies = [
+  "pydantic>=2.7,<3",
+  "sqlalchemy>=2.0,<3",
+  "alembic>=1.13,<2",
+  "psycopg[binary]>=3.1,<4",
+  "celery>=5.4,<6",
+]
 
 [project.scripts]
 ee-bench = "experience_engine.cli:main"
+ee-relay = "experience_engine.adapters.mq.relay_cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
@@ -22,6 +29,12 @@ packages = ["src/experience_engine"]
 testpaths = ["tests"]
 pythonpath = ["tests"]
 addopts = "-q"
+# Dump all thread stacks if a test blocks (integration tests talk to real brokers).
+faulthandler_timeout = 240
+markers = [
+  "integration: needs PostgreSQL (EE_TEST_DATABASE_URL) and/or RabbitMQ (EE_TEST_AMQP_URL)",
+  "migration: Alembic migration tests (need EE_TEST_DATABASE_URL)",
+]
 
 [tool.ruff]
 line-length = 100
@@ -31,8 +44,20 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*" = ["E501", "I001", "UP"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["celery.*", "kombu.*", "billiard.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["experience_engine.adapters.mq.*"]
+disallow_untyped_calls = false
+implicit_reexport = true

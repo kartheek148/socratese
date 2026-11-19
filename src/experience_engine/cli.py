@@ -4,7 +4,10 @@ import argparse
 import sys
 from pathlib import Path
 
+from experience_engine.adapters.artifacts.local_fs import LocalFsArtifactStore
 from experience_engine.adapters.clock import SystemClock
+from experience_engine.adapters.db.engine import InfraSettings, make_engine
+from experience_engine.adapters.db.run_lifecycle import SqlRunLifecycle
 from experience_engine.adapters.llm.fake import HeuristicFakeLLM
 from experience_engine.adapters.llm.openai_compatible import OpenAICompatibleClient
 from experience_engine.adapters.results import JsonlResultStore
@@ -19,6 +22,7 @@ from experience_engine.bench.report import compare_runs, render_report, summariz
 from experience_engine.bench.verifier import SimulationVerifier
 from experience_engine.config import LLMSettings
 from experience_engine.domain.benchmark import AgentConfig, BenchmarkRunRecord, ModelSettings, Split
+from experience_engine.domain.redaction import Redactor
 from experience_engine.execution.controller import FixedPolicy
 from experience_engine.execution.protocol import PROMPT_VERSION
 
@@ -65,6 +69,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
     config = AgentConfig(prompt_version=PROMPT_VERSION, model=model)
 
     store = JsonlResultStore(out)
+    lifecycle = artifacts = redactor = None
+    if args.persist:
+        infra = InfraSettings.from_env()
+        lifecycle = SqlRunLifecycle(make_engine(infra.database_url))
+        artifacts = LocalFsArtifactStore(infra.artifact_root)
+        known = [settings.api_key.get_secret_value()] if args.llm == "openai" else []
+        redactor = Redactor(known_secrets=known)
     records: list[BenchmarkRunRecord] = []
     for split in splits:
         loaded = loader.load(split)
@@ -78,6 +89,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
             verifier=SimulationVerifier(),
             clock=SystemClock(),
             store=store,
+            lifecycle=lifecycle,
+            artifacts=artifacts,
+            redactor=redactor,
         )
     s = summarize(records)
     print(f"{s.verified}/{s.n} verified successes; statuses={s.statuses}; results in {out}")
@@ -121,6 +135,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--llm", choices=["fake", "openai"], default="fake")
     run.add_argument("--seed", type=int, default=0)
     run.add_argument("--out", required=True)
+    run.add_argument(
+        "--persist",
+        action="store_true",
+        help="also persist traces, outcomes and outbox events (EE_DATABASE_URL, EE_ARTIFACT_ROOT)",
+    )
     run.set_defaults(func=_cmd_run)
 
     rep = sub.add_parser("report", help="render a markdown report from a run file")
