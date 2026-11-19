@@ -9,6 +9,7 @@ dependencies = [
   "alembic>=1.13,<2",
   "psycopg[binary]>=3.1,<4",
   "celery>=5.4,<6",
+  "google-auth[requests]>=2.30,<3",
 ]
 
 [project.scripts]
@@ -54,10 +55,10 @@ plugins = ["pydantic.mypy"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "kombu.*", "billiard.*"]
+module = ["celery.*", "kombu.*", "billiard.*", "google.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["experience_engine.adapters.mq.*"]
+module = ["experience_engine.adapters.mq.*", "experience_engine.adapters.llm.vertex"]
 disallow_untyped_calls = false
 implicit_reexport = true

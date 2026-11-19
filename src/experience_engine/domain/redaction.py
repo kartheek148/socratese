@@ -14,6 +14,7 @@ REDACTED = "[REDACTED]"
 _PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL),
     re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"ya29\.[A-Za-z0-9_-]{20,}"),
     re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
     re.compile(r"AKIA[0-9A-Z]{16}"),

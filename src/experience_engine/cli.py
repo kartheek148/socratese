@@ -1,6 +1,7 @@
 """ee-bench entrypoint: generate datasets, run the baseline, report, compare."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -10,6 +11,10 @@ from experience_engine.adapters.db.engine import InfraSettings, make_engine
 from experience_engine.adapters.db.run_lifecycle import SqlRunLifecycle
 from experience_engine.adapters.llm.fake import HeuristicFakeLLM
 from experience_engine.adapters.llm.openai_compatible import OpenAICompatibleClient
+from experience_engine.adapters.llm.vertex import (
+    service_account_token_provider,
+    vertex_config_from_env,
+)
 from experience_engine.adapters.results import JsonlResultStore
 from experience_engine.bench.dataset import (
     DEFAULT_SEED,
@@ -48,18 +53,34 @@ def _cmd_run(args: argparse.Namespace) -> int:
     loader = DatasetLoader(Path(args.root), EvaluatorAccess.from_env())
 
     llm_factory: LLMFactory
+    known_secrets: list[str] = []
     if args.llm == "fake":
         model = ModelSettings(provider="fake", model="heuristic-fake/1", seed=args.seed)
         llm_factory = lambda _task, _seed: HeuristicFakeLLM()  # noqa: E731
     else:
+        provider = ""
         try:
-            settings = LLMSettings.from_env()
+            if args.llm == "vertex":
+                vertex = vertex_config_from_env(dict(os.environ))
+                settings = vertex.settings(
+                    temperature=float(os.environ.get("EE_LLM_TEMPERATURE", "0")),
+                    max_output_tokens=int(os.environ.get("EE_LLM_MAX_OUTPUT_TOKENS", "0")) or None,
+                )
+                client = OpenAICompatibleClient(
+                    settings, token_provider=service_account_token_provider(vertex.credentials_file)
+                )
+                provider = vertex.provider_label  # no project id in reports
+            else:
+                settings = LLMSettings.from_env()
+                client = OpenAICompatibleClient(settings)
+                provider = settings.base_url
+                if settings.api_key is not None:
+                    known_secrets.append(settings.api_key.get_secret_value())
         except RuntimeError as exc:
             print(f"{exc} (see docs/benchmark.md)", file=sys.stderr)
             return 2
-        client = OpenAICompatibleClient(settings)
         model = ModelSettings(
-            provider=settings.base_url,
+            provider=provider,
             model=settings.model,
             temperature=settings.temperature,
             seed=args.seed,
@@ -74,8 +95,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         infra = InfraSettings.from_env()
         lifecycle = SqlRunLifecycle(make_engine(infra.database_url))
         artifacts = LocalFsArtifactStore(infra.artifact_root)
-        known = [settings.api_key.get_secret_value()] if args.llm == "openai" else []
-        redactor = Redactor(known_secrets=known)
+        redactor = Redactor(known_secrets=known_secrets)
     records: list[BenchmarkRunRecord] = []
     for split in splits:
         loaded = loader.load(split)
@@ -132,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--split", choices=["all", "discovery", "validation", "hidden_transfer"], default="all"
     )
-    run.add_argument("--llm", choices=["fake", "openai"], default="fake")
+    run.add_argument("--llm", choices=["fake", "openai", "vertex"], default="fake")
     run.add_argument("--seed", type=int, default=0)
     run.add_argument("--out", required=True)
     run.add_argument(

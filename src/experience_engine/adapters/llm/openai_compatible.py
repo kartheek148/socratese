@@ -19,9 +19,24 @@ class OpenAICompatibleClient:
         settings: LLMSettings,
         *,
         sleep: Callable[[float], None] = time.sleep,
+        token_provider: Callable[[], str] | None = None,
     ):
         self._settings = settings
         self._sleep = sleep
+        self._token_provider = token_provider
+        if token_provider is None and settings.api_key is None:
+            raise ValueError("an api_key or a token_provider is required")
+
+    def _bearer(self) -> str:
+        if self._token_provider is not None:
+            try:
+                return self._token_provider()
+            except (
+                Exception
+            ) as exc:  # auth problems are infrastructure failures, never agent failures
+                raise LLMError(f"could not obtain access token: {type(exc).__name__}") from exc
+        assert self._settings.api_key is not None
+        return self._settings.api_key.get_secret_value()
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         s = self._settings
@@ -33,17 +48,19 @@ class OpenAICompatibleClient:
         }
         if request.model.seed is not None:
             body["seed"] = request.model.seed
-        http_request = urllib.request.Request(
-            f"{s.base_url.rstrip('/')}/chat/completions",
-            data=json.dumps(body).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {s.api_key.get_secret_value()}",
-            },
-            method="POST",
-        )
+        payload = json.dumps(body).encode()
         last_error = "unknown error"
         for attempt in range(s.max_retries + 1):
+            # Built per attempt so a refreshed/rotated token is always used.
+            http_request = urllib.request.Request(
+                f"{s.base_url.rstrip('/')}/chat/completions",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self._bearer()}",
+                },
+                method="POST",
+            )
             try:
                 with urllib.request.urlopen(http_request, timeout=s.timeout_s) as resp:  # noqa: S310
                     return self._parse(json.loads(resp.read()))
@@ -65,8 +82,11 @@ class OpenAICompatibleClient:
         usage = data["usage"]
         if not isinstance(text, str):
             raise TypeError("content is not text")
-        return LLMResponse(
-            text=text,
-            prompt_tokens=int(usage["prompt_tokens"]),
-            completion_tokens=int(usage["completion_tokens"]),
-        )
+        prompt = int(usage["prompt_tokens"])
+        completion = int(usage["completion_tokens"])
+        # Some providers (e.g. Gemini "thinking") bill reasoning tokens that are not part of
+        # completion_tokens; total_tokens is the billed figure, so never under-count.
+        total = usage.get("total_tokens")
+        if isinstance(total, int) and total - prompt > completion:
+            completion = total - prompt
+        return LLMResponse(text=text, prompt_tokens=prompt, completion_tokens=completion)
