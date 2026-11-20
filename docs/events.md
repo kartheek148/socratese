@@ -11,9 +11,12 @@ Emitted by the runtime/orchestrator through the `TraceSink` port; one append-onl
 | `TOOL_CALL` | each tool call (`ok`/`failed`/`denied`) | runtime version | `args`, `output` |
 | `INVALID_ACTION` | unparseable model reply (`retry`/`fatal`) | runtime version | – |
 | `RUN_TERMINATED` | loop ended (`action` = termination reason) | runtime version | – |
+| `CAPABILITY_MATCH` | (M5) matcher result: catalog size, eligible and rejected candidates with reasons | matcher | `candidates` |
+| `CAPABILITY_EXEC` | (M5) capability executor finished (`status` = COMPLETED/FALLBACK/ABORTED/ESCALATE) | runtime | `steps` |
+| `FALLBACK` | (M5) capability handed over to general planning; metrics hold the remaining budgets | runtime | — |
 | `VERIFICATION` | independent verifier finished (`status` = verifier status) | verifier version | `results` |
 
-Parent links: `MODEL_CALL → previous event`, `TOOL_CALL → its MODEL_CALL`, `RUN_TERMINATED`/`VERIFICATION → DECISION`. Capability version is recorded on `run_outcomes.capability_version` (null until M5).
+Parent links: `MODEL_CALL → previous event`, `TOOL_CALL → its MODEL_CALL`, `RUN_TERMINATED`/`VERIFICATION → DECISION`. Capability version (`id@version`) is recorded on `run_outcomes.capability_version`; it is null for runs that did not use a capability.
 
 Events are written as they happen (own transaction each), so a crashed run leaves a `RUNNING` run with a partial, inspectable trace. **Deferred:** a reaper that marks stale `RUNNING` runs (e.g. `ABANDONED`/`UNKNOWN`).
 

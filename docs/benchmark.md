@@ -88,5 +88,5 @@ Dataset name/version/split/content hash, seed, agent config (prompt version, pro
 
 Read these results with care:
 - **Single seed, tiny samples** (Wilson intervals are wide). Even at temperature 0 the model is not deterministic: two discovery runs failed on different tasks (`-00`/`-02` in a smoke run, `-01`/`-02` in the committed run). Multiple seeds are required before any configuration comparison.
-- **Limited headroom.** The baseline already passes 86% overall and 100% of hidden-transfer, so this benchmark cannot yet demonstrate large improvements from learning. Before the M5 gate it needs harder task variants and more tasks per family (risk R3 in the fit/gap report).
+- **Limited headroom.** The baseline already passes 86% overall and 100% of hidden-transfer, so this benchmark cannot yet demonstrate large improvements from learning. Before any claim of learning-driven improvement it needs harder task variants and more tasks per family (risk R3 in the fit/gap report).
 - The hidden-transfer split was run by the evaluator role, as designed; it must still move out of the repository before M3 (ADR 0004).

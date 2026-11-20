@@ -154,3 +154,11 @@ class SqlCapabilityStore:
 
     def list_executable(self, tenant_id: str) -> list[CapabilityDefinition]:
         return [d for d, _ in self.list_versions(tenant_id, EXECUTABLE_STATES)]
+
+    def get_executable(
+        self, tenant_id: str, capability_id: str, version: int
+    ) -> CapabilityDefinition | None:
+        for d in self.list_executable(tenant_id):
+            if d.id == capability_id and d.version == version:
+                return d
+        return None

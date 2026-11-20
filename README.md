@@ -9,7 +9,7 @@ This package contains a repository-ready starting point for implementing an Expe
 - `docs/architecture.md` — system architecture, components, interfaces, data model, execution flows, safety, and measurement.
 - `docs/implementation-roadmap.md` — milestone plan and acceptance criteria.
 
-## Development (Milestones 1-2)
+## Development (Milestones 1-5)
 
 ```
 uv sync
@@ -25,7 +25,7 @@ uv run pytest                      # creates/drops its own database and uniquely
 docker compose -f deploy/docker-compose.yml -p ee-test down
 ```
 
-Benchmark and baseline: [docs/benchmark.md](docs/benchmark.md). Data model: [docs/schema.md](docs/schema.md). Events, outbox and messaging: [docs/events.md](docs/events.md). Capabilities, DSL and the candidate compiler (`ee-learn`): [docs/capabilities.md](docs/capabilities.md). Evaluation, promotion policy and the registry (`ee-eval`): [docs/evaluation.md](docs/evaluation.md).
+Benchmark and baseline: [docs/benchmark.md](docs/benchmark.md). Data model: [docs/schema.md](docs/schema.md). Events, outbox and messaging: [docs/events.md](docs/events.md). Capabilities, DSL and the candidate compiler (`ee-learn`): [docs/capabilities.md](docs/capabilities.md). Evaluation, promotion policy and the registry (`ee-eval`): [docs/evaluation.md](docs/evaluation.md). Runtime capability matching, composition and fallback: [docs/runtime.md](docs/runtime.md).
 
 ## How to use
 

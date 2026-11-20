@@ -49,7 +49,7 @@ CANDIDATE -> VALIDATING -> APPROVED -> SHADOW -> CANARY -> ACTIVE
    DEPRECATED -> ACTIVE only as the restore step of a rollback
 ```
 
-`RegistryService` is the only code that moves states. Each change is **atomic and audited**: version state(s), `capability_pointers` (active/previous), `capability_transitions` and `audit_log` rows commit together, under row locks, with an expected-state check (`StaleStateError` on races). Activating v2 deprecates v1 and remembers it as `previous`; **rolling back v2 restores v1 in the same transaction**, so the previous active version is never lost. `rollout.route()` gives deterministic SERVE / SHADOW / SKIP decisions (canary by stable hash bucket) for M5; M4 records shadow/canary *observations* (`ee-eval observe`) that the gates read.
+`RegistryService` is the only code that moves states. Each change is **atomic and audited**: version state(s), `capability_pointers` (active/previous), `capability_transitions` and `audit_log` rows commit together, under row locks, with an expected-state check (`StaleStateError` on races). Activating v2 deprecates v1 and remembers it as `previous`; **rolling back v2 restores v1 in the same transaction**, so the previous active version is never lost. `rollout.route()` gives deterministic SERVE / SHADOW / SKIP decisions (canary by stable hash bucket) for later rollout work; M4 records shadow/canary *observations* (`ee-eval observe`) that the gates read.
 
 ### Database-enforced rules (also hold for direct SQL)
 
@@ -93,6 +93,6 @@ What this shows, and what it does not:
 
 * Evaluation uses the simulated benchmark and very small suites (4 held-out, 4 transfer per family); confidence intervals are wide and one repetition/seed per task is used. Real-model results vary run to run.
 * The memory-only control is a single-hint stand-in; a stronger memory baseline arrives with M7.
-* Shadow/canary use evaluator-driven observations on held-out tasks; live traffic routing is M5.
+* Shadow/canary use evaluator-driven observations on held-out tasks; live SHADOW/CANARY traffic routing is not wired (M5 serves ACTIVE versions only; adaptive rollout is M6).
 * No OS-level sandbox, no separate evaluator credentials/roles in the database yet (application-level and process-level separation only).
-* `SUBCAPABILITY` is not executable yet (the compiler never emits it).
+* `SUBCAPABILITY` is executable since M5 (see [runtime.md](./runtime.md)), but the compiler never emits it, so composition is only tested with hand-written definitions.

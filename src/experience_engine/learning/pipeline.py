@@ -72,7 +72,12 @@ class ExperiencePipeline:
         completed = rec.outcome is not None and rec.run.status.value == "COMPLETED"
         if rec.outcome is None:
             raise RunNotFoundError("run has no outcome yet")
-        eligible, reason = classify_eligibility(rec.outcome.status, split, completed)
+        eligible, reason = classify_eligibility(
+            rec.outcome.status,
+            split,
+            completed,
+            capability_assisted=rec.outcome.capability_version is not None,
+        )
 
         trajectory: Trajectory | None = None
         sha: str | None = None

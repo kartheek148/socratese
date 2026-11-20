@@ -5,6 +5,7 @@ from experience_engine.bench.dataset import BenchTask
 from experience_engine.bench.environment import ENVIRONMENT_VERSION, SimulatedEnvironment
 from experience_engine.domain.benchmark import AgentConfig, BenchmarkRunRecord, DatasetVersion
 from experience_engine.domain.redaction import Redactor
+from experience_engine.execution.capability_runtime import CapabilityRuntime
 from experience_engine.execution.controller import Controller
 from experience_engine.execution.orchestrator import TaskOrchestrator
 from experience_engine.ports.artifacts import ArtifactStore
@@ -31,12 +32,14 @@ def run_benchmark(
     lifecycle: RunLifecycle | None = None,
     artifacts: ArtifactStore | None = None,
     redactor: Redactor | None = None,
+    capabilities: CapabilityRuntime | None = None,
 ) -> list[BenchmarkRunRecord]:
     """Run each task in a fresh session (new environment, new LLM client, no carried state).
 
     This is the no-learning baseline path: nothing is read from or written to any memory.
     Optional lifecycle/artifacts additionally persist traces, outcomes and outbox events (M2);
-    they never influence execution.
+    they never influence execution. With `capabilities` the controller may serve a task from a
+    matched capability (M5); without it this is exactly the baseline path.
     """
     orchestrator = TaskOrchestrator(
         controller=controller,
@@ -46,6 +49,7 @@ def run_benchmark(
         lifecycle=lifecycle,
         artifacts=artifacts,
         redactor=redactor,
+        capabilities=capabilities,
     )
     records: list[BenchmarkRunRecord] = []
     for bench_task in tasks:
@@ -78,6 +82,16 @@ def run_benchmark(
                 "family": bench_task.family,
                 "variant": bench_task.variant,
                 "task_id": task.task_id,
+                **(
+                    {"capability_fallback": result.runtime.fallback_reason[:200]}
+                    if result.runtime.fallback_reason
+                    else {}
+                ),
+                **(
+                    {"capability_catalog": "experimental"}
+                    if capabilities is not None and capabilities.experimental
+                    else {}
+                ),
             },
             decision=result.decision,
             outcome=result.outcome,

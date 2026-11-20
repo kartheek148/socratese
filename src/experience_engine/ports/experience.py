@@ -91,3 +91,9 @@ class ExecutableCapabilityCatalog(Protocol):
     """The ONLY capability view normal task execution may use: ACTIVE versions, nothing else."""
 
     def list_executable(self, tenant_id: str) -> list[CapabilityDefinition]: ...
+
+    def get_executable(
+        self, tenant_id: str, capability_id: str, version: int
+    ) -> CapabilityDefinition | None:
+        """One executable version (used to resolve declared dependencies), or None."""
+        ...

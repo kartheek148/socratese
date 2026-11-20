@@ -59,6 +59,9 @@ class ExclusionReason(StrEnum):
     UNKNOWN_PROVENANCE = "UNKNOWN_PROVENANCE"
     UNVERIFIED_OUTCOME = "UNVERIFIED_OUTCOME"
     INCOMPLETE_RUN = "INCOMPLETE_RUN"
+    # Runs served by a capability are not evidence for creating capabilities: learning from our
+    # own output would be self-reinforcement.
+    CAPABILITY_ASSISTED = "CAPABILITY_ASSISTED"
 
 
 class ExperienceCase(_Frozen):
@@ -82,10 +85,14 @@ class ExperienceCase(_Frozen):
 
 
 def classify_eligibility(
-    outcome: OutcomeStatus, dataset_split: str | None, run_completed: bool
+    outcome: OutcomeStatus,
+    dataset_split: str | None,
+    run_completed: bool,
+    capability_assisted: bool = False,
 ) -> tuple[bool, ExclusionReason | None]:
     """Rule 9: learn only from completed, verified-outcome runs of known provenance, and only
     from the discovery split (validation / hidden-transfer data must never reach the compiler).
+    Runs that used a capability are excluded to avoid learning from our own output.
     """
     if not run_completed:
         return False, ExclusionReason.INCOMPLETE_RUN
@@ -93,6 +100,8 @@ def classify_eligibility(
         return False, ExclusionReason.UNKNOWN_PROVENANCE
     if dataset_split != DISCOVERY_SPLIT:
         return False, ExclusionReason.NON_DISCOVERY_SPLIT
+    if capability_assisted:
+        return False, ExclusionReason.CAPABILITY_ASSISTED
     if outcome not in (OutcomeStatus.VERIFIED_SUCCESS, OutcomeStatus.FAILURE):
         return False, ExclusionReason.UNVERIFIED_OUTCOME
     return True, None

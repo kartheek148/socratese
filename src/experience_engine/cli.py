@@ -3,13 +3,16 @@
 import argparse
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from experience_engine.adapters.artifacts.local_fs import LocalFsArtifactStore
 from experience_engine.adapters.clock import SystemClock
+from experience_engine.adapters.db.catalog import SqlExecutableCatalog
 from experience_engine.adapters.db.engine import InfraSettings, make_engine
 from experience_engine.adapters.db.run_lifecycle import SqlRunLifecycle
-from experience_engine.adapters.llm.fake import HeuristicFakeLLM
+from experience_engine.adapters.llm.decisions import LlmDecisionProvider
+from experience_engine.adapters.llm.fake import HeuristicDecisionProvider, HeuristicFakeLLM
 from experience_engine.adapters.llm.openai_compatible import OpenAICompatibleClient
 from experience_engine.adapters.llm.vertex import (
     service_account_token_provider,
@@ -25,13 +28,23 @@ from experience_engine.bench.dataset import (
     write_private_dataset,
 )
 from experience_engine.bench.harness import LLMFactory, run_benchmark
-from experience_engine.bench.report import compare_runs, render_report, summarize
+from experience_engine.bench.report import (
+    compare_runs,
+    render_comparison,
+    render_report,
+    summarize,
+)
 from experience_engine.bench.verifier import SimulationVerifier
 from experience_engine.config import LLMSettings
 from experience_engine.domain.benchmark import AgentConfig, BenchmarkRunRecord, ModelSettings, Split
+from experience_engine.domain.capability import EXECUTABLE_STATES, CapabilityState
 from experience_engine.domain.redaction import Redactor
-from experience_engine.execution.controller import FixedPolicy
+from experience_engine.execution.capability_runtime import CapabilityRuntime
+from experience_engine.execution.controller import Controller, FixedPolicy, RuleCapabilityPolicy
+from experience_engine.execution.matcher import CapabilityMatcher
 from experience_engine.execution.protocol import PROMPT_VERSION
+from experience_engine.ports.decisions import DecisionProvider
+from experience_engine.ports.llm import LLMClient
 
 TENANT = "bench"
 
@@ -112,7 +125,43 @@ def _cmd_run(args: argparse.Namespace) -> int:
             max_output_tokens=settings.max_output_tokens,
         )
         llm_factory = lambda _task, _seed: client  # noqa: E731  (client is stateless)
-    config = AgentConfig(prompt_version=PROMPT_VERSION, model=model)
+    controller: Controller = FixedPolicy()
+    runtime: CapabilityRuntime | None = None
+    if args.capabilities:
+        try:
+            states = (
+                {CapabilityState(x.strip().upper()) for x in args.experimental_capability_states}
+                if args.experimental_capability_states
+                else set(EXECUTABLE_STATES)
+            )
+        except ValueError as exc:
+            print(f"bad capability state: {exc}", file=sys.stderr)
+            return 2
+        catalog = SqlExecutableCatalog(make_engine(InfraSettings.from_env().database_url), states)
+        decisions_for: Callable[[LLMClient], DecisionProvider] = (
+            (lambda _llm: HeuristicDecisionProvider())
+            if args.llm == "fake"
+            else (lambda llm: LlmDecisionProvider(llm, model))
+        )
+        runtime = CapabilityRuntime(
+            catalog=catalog,
+            matcher=CapabilityMatcher(catalog),
+            decisions_for=decisions_for,
+            experimental=catalog.experimental,
+        )
+        controller = RuleCapabilityPolicy()
+        if runtime.experimental:
+            print(
+                "WARNING: EXPERIMENTAL capability catalog "
+                f"({sorted(s.value for s in states)}): runs are tagged and are not promotion "
+                "evidence",
+                file=sys.stderr,
+            )
+    config = AgentConfig(
+        config_id="C_CAPABILITIES" if runtime else "A_BASELINE",
+        prompt_version=PROMPT_VERSION,
+        model=model,
+    )
 
     store = JsonlResultStore(out)
     lifecycle = artifacts = redactor = None
@@ -130,13 +179,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
             seed=args.seed,
             config=config,
             llm_factory=llm_factory,
-            controller=FixedPolicy(),
+            controller=controller,
             verifier=SimulationVerifier(),
             clock=SystemClock(),
             store=store,
             lifecycle=lifecycle,
             artifacts=artifacts,
             redactor=redactor,
+            capabilities=runtime,
         )
     s = summarize(records)
     print(f"{s.verified}/{s.n} verified successes; statuses={s.statuses}; results in {out}")
@@ -145,6 +195,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 def _cmd_report(args: argparse.Namespace) -> int:
     text = render_report(_load_records(Path(args.runs)), title=args.title)
+    Path(args.out).write_text(text)
+    print(f"wrote {args.out}")
+    return 0
+
+
+def _cmd_report_compare(args: argparse.Namespace) -> int:
+    text = render_comparison(
+        _load_records(Path(args.baseline)), _load_records(Path(args.candidate)), title=args.title
+    )
     Path(args.out).write_text(text)
     print(f"wrote {args.out}")
     return 0
@@ -195,6 +254,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="also persist traces, outcomes and outbox events (EE_DATABASE_URL, EE_ARTIFACT_ROOT)",
     )
+    run.add_argument(
+        "--capabilities",
+        action="store_true",
+        help="serve tasks from the capability catalog (EE_DATABASE_URL); ACTIVE versions only",
+    )
+    run.add_argument(
+        "--experimental-capability-states",
+        nargs="+",
+        metavar="STATE",
+        help="EXPERIMENT ONLY: also allow capabilities in these states (e.g. REJECTED); the runs "
+        "are tagged and the report carries a warning",
+    )
     run.set_defaults(func=_cmd_run)
 
     rep = sub.add_parser("report", help="render a markdown report from a run file")
@@ -202,6 +273,13 @@ def main(argv: list[str] | None = None) -> int:
     rep.add_argument("--out", required=True)
     rep.add_argument("--title", default="Baseline report")
     rep.set_defaults(func=_cmd_report)
+
+    rc = sub.add_parser("report-compare", help="paired report: baseline vs capability runtime")
+    rc.add_argument("--baseline", required=True)
+    rc.add_argument("--candidate", required=True)
+    rc.add_argument("--out", required=True)
+    rc.add_argument("--title", default="Capability runtime comparison")
+    rc.set_defaults(func=_cmd_report_compare)
 
     cmp = sub.add_parser("compare", help="compare two run files (exit 1 if they differ)")
     cmp.add_argument("a")

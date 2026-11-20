@@ -88,6 +88,18 @@ def _row(label: str, s: Summary) -> str:
     )
 
 
+def _config_line(first: BenchmarkRunRecord) -> str:
+    if first.config.config_id == "A_BASELINE":
+        return (
+            "Configuration **A (fixed baseline, no persistent learning, no memory, "
+            "no capabilities)**."
+        )
+    return (
+        f"Configuration **{first.config.config_id}** (runtime capability matching; "
+        "see `docs/runtime.md`). Not the no-learning baseline."
+    )
+
+
 def render_report(records: list[BenchmarkRunRecord], *, title: str = "Baseline report") -> str:
     if not records:
         raise ValueError("no records to report")
@@ -108,7 +120,7 @@ def render_report(records: list[BenchmarkRunRecord], *, title: str = "Baseline r
     lines = [
         f"# {title}",
         "",
-        "Configuration **A (fixed baseline, no persistent learning, no memory, no capabilities)**.",
+        _config_line(first),
         "",
         "## Reproducibility metadata",
         "",
@@ -125,7 +137,8 @@ def render_report(records: list[BenchmarkRunRecord], *, title: str = "Baseline r
         f"- Prompt version: `{first.config.prompt_version}`; runtime `{first.runtime_version}`; "
         f"verifier `{first.verifier_version}`; environment `{first.environment_version}`; "
         f"policy `{first.decision.policy_version}`",
-        "- Learning cost: 0 (baseline performs no learning). Lifecycle cost equals execution cost.",
+        "- Learning cost: 0 (this run performs no learning). Lifecycle cost equals execution "
+        "cost; the cost of producing any capability used is reported separately.",
         "- Run-record digests (deterministic fields only; IDs, timestamps and latency excluded) "
         "make two runs comparable via `ee-bench compare`.",
         "",
@@ -195,3 +208,115 @@ def compare_runs(a: list[BenchmarkRunRecord], b: list[BenchmarkRunRecord]) -> Co
         summary_a=summarize(a),
         summary_b=summarize(b),
     )
+
+
+def _strategy_counts(records: list[BenchmarkRunRecord]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for r in records:
+        key = r.decision.selected_action.value
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def render_comparison(
+    baseline: list[BenchmarkRunRecord],
+    candidate: list[BenchmarkRunRecord],
+    *,
+    title: str = "Capability runtime comparison",
+) -> str:
+    """Paired comparison of arm A (baseline) and arm C (capability runtime) on the same tasks."""
+    if not baseline or not candidate:
+        raise ValueError("both arms need records")
+    a_by = {r.tags["task_id"]: r for r in baseline}
+    c_by = {r.tags["task_id"]: r for r in candidate}
+    shared = sorted(a_by.keys() & c_by.keys())
+    if not shared:
+        raise ValueError("the two arms share no tasks")
+    a = [a_by[k] for k in shared]
+    c = [c_by[k] for k in shared]
+    sa, sc = summarize(a), summarize(c)
+    experimental = any(r.tags.get("capability_catalog") == "experimental" for r in c)
+    used = [r for r in c if r.outcome.capability_version]
+    fallbacks = [r for r in c if "capability_fallback" in r.tags]
+    versions: dict[str, int] = {}
+    for r in used:
+        versions[r.outcome.capability_version or ""] = (
+            versions.get(r.outcome.capability_version or "", 0) + 1
+        )
+
+    def ok(r: BenchmarkRunRecord) -> bool:
+        return r.outcome.status == OutcomeStatus.VERIFIED_SUCCESS
+
+    both = sum(ok(x) and ok(y) for x, y in zip(a, c, strict=True))
+    only_c = sum(ok(y) and not ok(x) for x, y in zip(a, c, strict=True))
+    only_a = sum(ok(x) and not ok(y) for x, y in zip(a, c, strict=True))
+    neither = len(a) - both - only_c - only_a
+    (alo, ahi), (clo, chi) = sa.ci, sc.ci
+    overlap = alo <= chi and clo <= ahi
+
+    header = (
+        "| Arm | Runs | Verified | Verified success (95% Wilson CI) | Fail/Partial/Unknown | "
+        "False claims | Tokens / verified success | Tool calls / verified success | "
+        "Mean latency ms | Human interventions |\n"
+        "|---|---|---|---|---|---|---|---|---|---|"
+    )
+    first = c[0]
+    lines = [f"# {title}", ""]
+    if experimental:
+        lines += [
+            "> **EXPERIMENTAL CATALOG.** Arm C used capabilities that were **not promoted** to "
+            "ACTIVE by the evaluation workflow. This measures the runtime mechanism only; it is "
+            "not evidence that any capability is approved, and must not be used to promote one.",
+            "",
+        ]
+    if first.config.model.provider == "fake":
+        lines += [
+            "> **Caution:** scripted `FakeLLM`; validates mechanics, not real-model value.",
+            "",
+        ]
+    lines += [
+        "## Setup",
+        "",
+        f"- Paired tasks: {len(shared)} (identical task and environment per arm; every run in a "
+        "fresh session; arm C sees only capabilities in the catalog, no transcripts).",
+        f"- Arm A: `{a[0].config.config_id}`, policy `{a[0].decision.policy_version}`.",
+        f"- Arm C: `{first.config.config_id}`, policy `{first.decision.policy_version}`.",
+        f"- Model: `{first.config.model.provider}` / `{first.config.model.model}`.",
+        f"- Dataset: `{first.dataset.name}` v{first.dataset.version}, seed {first.seed}.",
+        "",
+        "## Outcomes",
+        "",
+        header,
+        _row("A baseline", sa),
+        _row("C capability runtime", sc),
+        "",
+        f"Paired: both succeed {both}, only C {only_c}, only A {only_a}, neither {neither}.",
+        "",
+        "Confidence intervals "
+        + (
+            "**overlap**: the difference is not statistically distinguishable at this sample size."
+            if overlap
+            else "**do not overlap**: the difference is unlikely to be chance."
+        ),
+        "",
+        "## Capability usage (arm C)",
+        "",
+        f"- Strategies selected: {_strategy_counts(c)}",
+        f"- Runs that used a capability: {len(used)}/{len(c)}; versions: {versions or 'none'}",
+        f"- Fell back to general planning: {len(fallbacks)}",
+        f"- Capability aborts: "
+        f"{sum(r.termination.value == 'CAPABILITY_ABORTED' for r in c)}; "
+        f"escalations: {sum(r.termination.value == 'ESCALATED' for r in c)}",
+        "",
+        "## Notes",
+        "",
+        "- Success is decided only by the independent verifier from final environment state.",
+        "- Tokens and tool calls include capability-internal decisions and any fallback work.",
+        "- The cost of learning and evaluating the capability is **not** in this table; see the "
+        "evaluation report for it. Lifecycle cost must be amortised over expected reuse.",
+        "- Differences need more tasks/seeds before being treated as improvements.",
+        "",
+    ]
+    text = "\n".join(lines)
+    assert_no_secrets(text)
+    return text

@@ -36,6 +36,7 @@ class RuntimeResult:
     human_interventions: int = 0
     agent_claimed_done: bool = False
     failure_reasons: list[str] = field(default_factory=list)
+    fallback_reason: str | None = None  # set when a capability handed over to general planning
 
 
 class AgentRuntime:

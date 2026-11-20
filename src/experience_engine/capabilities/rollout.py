@@ -1,4 +1,7 @@
-"""Deterministic rollout routing for SHADOW / CANARY / ACTIVE versions (used by milestone 5)."""
+"""Deterministic rollout routing for SHADOW / CANARY / ACTIVE versions.
+
+Not wired into live task routing yet (see docs/runtime.md).
+"""
 
 import hashlib
 from enum import StrEnum

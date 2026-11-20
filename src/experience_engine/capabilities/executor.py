@@ -76,6 +76,8 @@ class ExecReason(StrEnum):
     UNSUPPORTED_STEP = "UNSUPPORTED_STEP"
     HUMAN_APPROVAL_REQUIRED = "HUMAN_APPROVAL_REQUIRED"
     RETRY_EXHAUSTED = "RETRY_EXHAUSTED"
+    DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
+    COMPOSITION_LIMIT = "COMPOSITION_LIMIT"
 
 
 _ABORT_REASONS = {
@@ -147,11 +149,14 @@ class CapabilityExecutor:
         decisions: DecisionProvider,
         clock: Clock,
         verify: Callable[[], bool | None],
+        resolver: Callable[[str], CapabilityDefinition | None] | None = None,
     ):
         self._tools = tools
         self._decisions = decisions
         self._clock = clock
         self._verify = verify
+        # resolves "id@version" to an EXECUTABLE (ACTIVE) definition; None disables composition
+        self._resolver = resolver
 
     # ---- public -------------------------------------------------------------------------------
     def run(
@@ -166,7 +171,8 @@ class CapabilityExecutor:
     ) -> ExecutionResult:
         result = ExecutionResult(ExecStatus.COMPLETED, ExecReason.NO_VERIFY_STEP)
         try:
-            validate_definition(definition)
+            # declared dependencies are resolved (ACTIVE-only) when a SUBCAPABILITY step runs
+            validate_definition(definition, known_dependencies=definition.dependencies)
         except CapabilityValidationError as exc:
             return self._stop(result, _Stop(ExecReason.INVALID_DEFINITION, str(exc)[:200]))
         if capability_tenant != task.tenant_id:
@@ -186,11 +192,13 @@ class CapabilityExecutor:
             executor=self,
             definition=definition,
             task=task,
+            facts=facts,
             allowed=set(definition.permissions) & set(facts.allowed_tools) & set(APPROVED_TOOLS),
             inputs=dict(inputs or {}),
             cancel=cancel,
             result=result,
             start_ms=self._clock.monotonic_ms(),
+            stack=(definition.id,),
         )
         try:
             run.exec_steps(definition.steps, depth=1)
@@ -213,22 +221,36 @@ class _Run:
     executor: CapabilityExecutor
     definition: CapabilityDefinition
     task: TaskSpec
+    facts: EnvironmentFacts
     allowed: set[str]
     inputs: dict[str, Value]
     cancel: CancellationToken | None
     result: ExecutionResult
     start_ms: int
+    stack: tuple[str, ...]
+    parent: "_Run | None" = None
     env: dict[str, Value] = field(default_factory=dict)
+
+    def _chain(self) -> list[CapabilityDefinition]:
+        """This definition and every ancestor: a child runs inside ALL their budgets."""
+        out: list[CapabilityDefinition] = []
+        cur: _Run | None = self
+        while cur is not None:
+            out.append(cur.definition)
+            cur = cur.parent
+        return out
 
     # ---- limits -------------------------------------------------------------------------------
     def _tick(self) -> None:
-        b = self.definition.budgets
+        chain = self._chain()
+        max_steps = min(d.budgets.max_steps for d in chain)
+        timeout_ms = min(d.budgets.timeout_ms for d in chain)
         if self.cancel is not None and self.cancel.cancelled:
             raise _Stop(ExecReason.CANCELLED, "cancelled")
-        if self.executor._clock.monotonic_ms() - self.start_ms >= b.timeout_ms:
-            raise _Stop(ExecReason.TIMEOUT, f"exceeded timeout_ms={b.timeout_ms}")
-        if self.result.steps_executed >= b.max_steps:
-            raise _Stop(ExecReason.MAX_STEPS, f"exceeded max_steps={b.max_steps}")
+        if self.executor._clock.monotonic_ms() - self.start_ms >= timeout_ms:
+            raise _Stop(ExecReason.TIMEOUT, f"exceeded timeout_ms={timeout_ms}")
+        if self.result.steps_executed >= max_steps:
+            raise _Stop(ExecReason.MAX_STEPS, f"exceeded max_steps={max_steps}")
         self.result.steps_executed += 1
 
     def _log(self, step: Step, ok: bool, tokens: int = 0, note: str = "") -> None:
@@ -320,8 +342,57 @@ class _Run:
                 self._log(step, False, note="human approval required")
                 raise _Stop(ExecReason.HUMAN_APPROVAL_REQUIRED, step.reason_id, ExecStatus.ESCALATE)
             elif isinstance(step, Subcapability):
-                self._log(step, False, note="unsupported in milestone 4")
-                raise _Stop(ExecReason.UNSUPPORTED_STEP, "SUBCAPABILITY not supported yet")
+                self._subcapability(step)
+
+    MAX_COMPOSE_DEPTH = 2
+
+    def _subcapability(self, step: Subcapability) -> None:
+        """Run a declared, ACTIVE dependency inside this run's budgets.
+
+        The child shares the step/token/time counters (it can never exceed any ancestor's budget),
+        gets a fresh variable scope seeded only with the arguments given, may only use tools its
+        parent also permits, and must pass the same preconditions. Cycles and deep nesting stop.
+        """
+        resolve = self.executor._resolver
+        child = resolve(step.capability) if resolve is not None else None
+        if step.capability not in self.definition.dependencies or child is None:
+            self._log(step, False, note="dependency not executable")
+            raise _Stop(ExecReason.DEPENDENCY_UNAVAILABLE, f"{step.capability} is not executable")
+        if len(self.stack) > self.MAX_COMPOSE_DEPTH:
+            raise _Stop(ExecReason.COMPOSITION_LIMIT, "composition nested too deeply")
+        if child.id in self.stack:
+            raise _Stop(ExecReason.COMPOSITION_LIMIT, f"cycle through {child.id}")
+        try:
+            validate_definition(child, known_dependencies=child.dependencies)
+        except CapabilityValidationError as exc:
+            raise _Stop(ExecReason.INVALID_DEFINITION, str(exc)[:200]) from exc
+        if not set(child.permissions) <= set(self.definition.permissions):
+            self._log(step, False, note="child needs wider permissions")
+            raise _Stop(
+                ExecReason.TOOL_NOT_ALLOWED, "dependency needs tools its parent does not permit"
+            )
+        violations = check_preconditions(child, self.facts)
+        if violations:
+            raise _Stop(ExecReason.PRECONDITION_VIOLATED, "; ".join(violations)[:200])
+        args = {name: self._eval(expr) for name, expr in step.args.items()}
+        sub = _Run(
+            executor=self.executor,
+            definition=child,
+            task=self.task,
+            facts=self.facts,
+            allowed=self.allowed & set(child.permissions),
+            inputs=args,
+            cancel=self.cancel,
+            result=self.result,
+            start_ms=self.start_ms,
+            stack=(*self.stack, child.id),
+            parent=self,
+        )
+        self._log(step, True, note=step.capability)
+        try:
+            sub.exec_steps(child.steps, depth=1)
+        except _Retryable as retryable:  # a failure inside the child is the child's failure
+            raise retryable.stop from retryable
 
     def _tool(self, step: ToolCall) -> None:
         contract = APPROVED_TOOLS.get(step.tool)
@@ -348,10 +419,10 @@ class _Run:
             )
 
     def _decision(self, step: LlmDecision) -> None:
-        budgets = self.definition.budgets
-        remaining = budgets.max_tokens - self.result.tokens_used
+        max_tokens = min(d.budgets.max_tokens for d in self._chain())
+        remaining = max_tokens - self.result.tokens_used
         if remaining <= 0:
-            raise _Stop(ExecReason.MAX_TOKENS, f"exceeded max_tokens={budgets.max_tokens}")
+            raise _Stop(ExecReason.MAX_TOKENS, f"exceeded max_tokens={max_tokens}")
         observed: dict[str, str] = {}
         for name in step.inputs:
             value = self._var(name)
@@ -369,8 +440,8 @@ class _Run:
             raise _Stop(ExecReason.DECISION_FAILED, str(exc)[:200]) from exc
         self.result.tokens_used += decision.tokens
         self._log(step, True, decision.tokens)
-        if self.result.tokens_used > budgets.max_tokens:
-            raise _Stop(ExecReason.MAX_TOKENS, f"exceeded max_tokens={budgets.max_tokens}")
+        if self.result.tokens_used > max_tokens:
+            raise _Stop(ExecReason.MAX_TOKENS, f"exceeded max_tokens={max_tokens}")
         if set(decision.values) != set(step.output_schema):
             raise _Stop(ExecReason.DECISION_FAILED, "decision output keys do not match the schema")
         for key, kind in step.output_schema.items():

@@ -29,7 +29,7 @@ PURE = ["domain", "ports", "execution", "learning", "capabilities", "bench", "ev
 ALLOWED_INTERNAL = {
     "domain": {"domain"},
     "ports": {"domain", "ports"},
-    "execution": {"domain", "ports", "execution"},
+    "execution": {"domain", "ports", "execution", "capabilities"},
     "learning": {"domain", "ports", "learning", "capabilities"},
     "capabilities": {"domain", "ports", "capabilities"},
     "evaluation": {"domain", "ports", "capabilities", "execution", "bench", "evaluation"},
