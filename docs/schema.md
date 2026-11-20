@@ -22,12 +22,16 @@ Conventions: PostgreSQL 16; ids are UUIDv7 (`uuid`); timestamps are `timestamptz
 | `capability_versions` (M3) | immutable versions; M3 writes `CANDIDATE` only | unique `(tenant, capability, version)`; trigger: only `state` may change, no deletes; `definition_hash`, `procedure_hash`, `tests`, compiler/prompt/model versions |
 | `capability_evidence` (M3) | **append-only** source successes / counterexamples per version | unique `(tenant, capability, version, run, role)`; FKs → `task_runs`, `capability_versions` (tenant-scoped) |
 | `cost_ledger` (M3) | **append-only** learning/maintenance cost (wall ms, tokens, tool calls) per pipeline step | indexed `(tenant, pipeline)` |
+| `capability_evaluations` (M4) | **append-only** evaluation record: verdict, risk class, policy snapshot + hash, per-suite counts, aggregate metrics, dataset versions, model/seed/runtime/verifier/environment/evaluator versions, report hash | FK → `capability_versions`; CHECK `PASS ⇒ held-out, transfer and negative counts > 0` |
+| `capability_transitions` (M4) | **append-only** lifecycle history (from/to state, actor, reason, evaluation id, policy hash) | FK → versions, evaluation |
+| `capability_pointers` (M4) | per capability: `active_version`, `previous_version` (rollback target) | PK `(tenant, capability)`; updated only in the transition transaction |
+| `rollout_observations` (M4) | **append-only** shadow/canary observations (capability vs baseline outcome, tokens) | mode ∈ {SHADOW, CANARY}; FK → versions |
 
 `task_runs.tags` (M3, jsonb) holds run provenance: `dataset_name`, `dataset_version`, `dataset_split`, `dataset_content_hash`, `variant`, `seed`. Missing/unknown provenance makes a run ineligible for learning.
 
 ## Immutability enforcement
 
-Triggers (`ee_reject_mutation`, `ee_policy_decision_guard`, `ee_capability_version_guard`) reject `UPDATE`/`DELETE` on `trace_events`, `artifacts`, `run_outcomes`, `audit_log`, `experience_cases`, `capability_evidence`, `cost_ledger`; allow only the one-time outcome back-fill on `policy_decisions`; and allow only `state` changes on `capability_versions`. **Limits:** superusers/table owners can still `TRUNCATE` or drop triggers. Production application roles must be granted only `SELECT, INSERT` (plus `UPDATE` on `task_runs`, `outbox_events`, `learning_jobs`, and `UPDATE(outcome_status)` on `policy_decisions`). Roles are not created by the migration (deployment concern, deferred).
+Triggers (`ee_reject_mutation`, `ee_policy_decision_guard`, `ee_capability_version_guard`) reject `UPDATE`/`DELETE` on `trace_events`, `artifacts`, `run_outcomes`, `audit_log`, `experience_cases`, `capability_evidence`, `cost_ledger`, `capability_evaluations`, `capability_transitions`, `rollout_observations`; allow only the one-time outcome back-fill on `policy_decisions`; and allow only `state` changes on `capability_versions` — and (M4) only along the legal lifecycle graph, with `APPROVED` requiring a `PASS` evaluation. A partial unique index allows at most one `ACTIVE` version per capability. **Limits:** superusers/table owners can still `TRUNCATE` or drop triggers. Production application roles must be granted only `SELECT, INSERT` (plus `UPDATE` on `task_runs`, `outbox_events`, `learning_jobs`, and `UPDATE(outcome_status)` on `policy_decisions`). Roles are not created by the migration (deployment concern, deferred).
 
 ## Large payloads
 

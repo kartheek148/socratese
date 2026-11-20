@@ -59,7 +59,8 @@ from experience_engine.domain.experience import (
 from experience_engine.domain.outcome import OutcomeStatus
 from experience_engine.learning.contrast import contrast
 
-COMPILER_VERSION = "rule-compiler/1"
+# v2: LLM_DECISION step cap 2000 -> 4000 (thinking models spend hidden tokens against the cap)
+COMPILER_VERSION = "rule-compiler/2"
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 _FAMILY_RE = re.compile(r"[^a-z0-9]+")
 
@@ -71,6 +72,7 @@ class CompilerConfig:
     skeleton_support: float = 0.6
     max_tests: int = 5
     max_listed_runs: int = 50
+    decision_max_tokens: int = 4000
     dataset_name: str | None = None
     dataset_version: str | None = None
 
@@ -124,7 +126,7 @@ def _majority_value_type(successes: Sequence[Trajectory]) -> OutType:
     return OutType(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0])
 
 
-def _build_steps(skeleton: list[str], value_type: OutType) -> list[Step]:
+def _build_steps(skeleton: list[str], value_type: OutType, decision_max_tokens: int) -> list[Step]:
     steps: list[Step] = []
     bound_reads: list[str] = []
     needs_files = any(":" in tok for tok in skeleton)
@@ -167,7 +169,7 @@ def _build_steps(skeleton: list[str], value_type: OutType) -> list[Step]:
                     inputs=list(bound_reads),
                     output_schema={"key": OutType.STRING, "value": value_type},
                     bind=fix_var,
-                    max_tokens=2000,
+                    max_tokens=decision_max_tokens,
                 )
             )
             steps.append(
@@ -227,7 +229,7 @@ def _compile_family(
     signature = hashlib.sha256(
         json.dumps({"family": key, "skeleton": skeleton}, sort_keys=True).encode()
     ).hexdigest()
-    steps = _build_steps(skeleton, _majority_value_type(successes))
+    steps = _build_steps(skeleton, _majority_value_type(successes), cfg.decision_max_tokens)
     findings = contrast(successes, failures)
     critical = [f for f in findings if f.kind == FindingKind.CRITICAL and f.token in skeleton]
     shapes = sorted({t.config_shape for t in successes if t.config_shape})

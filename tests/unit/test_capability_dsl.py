@@ -69,7 +69,7 @@ def good() -> dict[str, object]:
         "known_limitations": ["Derived from 3 verified successes."],
         "provenance": {
             "source_run_ids": ["r1"],
-            "compiler_version": "rule-compiler/1",
+            "compiler_version": "rule-compiler/2",
             "pipeline_version": "experience/1",
         },
     }
@@ -215,12 +215,10 @@ def test_candidates_are_never_executable_by_lifecycle_rules() -> None:
     assert not can_transition(CapabilityState.CANDIDATE, CapabilityState.ACTIVE)
     assert not can_transition(CapabilityState.CANDIDATE, CapabilityState.SHADOW)
     assert can_transition(CapabilityState.CANDIDATE, CapabilityState.VALIDATING)
-    for terminal in (
-        CapabilityState.REJECTED,
-        CapabilityState.DEPRECATED,
-        CapabilityState.ROLLED_BACK,
-    ):
+    for terminal in (CapabilityState.REJECTED, CapabilityState.ROLLED_BACK):
         assert ALLOWED_TRANSITIONS[terminal] == frozenset()
+    # DEPRECATED only ever returns to ACTIVE (restore of the previous version on rollback)
+    assert ALLOWED_TRANSITIONS[CapabilityState.DEPRECATED] == {CapabilityState.ACTIVE}
     # the only path to ACTIVE runs through approval, shadow and canary
     reach = {CapabilityState.CANDIDATE}
     frontier = [CapabilityState.CANDIDATE]

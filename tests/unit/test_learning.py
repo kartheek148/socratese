@@ -156,7 +156,7 @@ def test_compiles_valid_traceable_candidate_with_versions_recorded() -> None:
     assert sorted(d.provenance.source_run_ids) == sorted(t.run_id for t in ok)
     assert sorted(d.provenance.counterexample_run_ids) == sorted(t.run_id for t in bad)
     assert (
-        d.provenance.compiler_version == "rule-compiler/1"
+        d.provenance.compiler_version == "rule-compiler/2"
         and d.provenance.pipeline_version == "experience/1"
     )
     assert d.provenance.prompt_version is None and d.provenance.model_version is None
@@ -180,6 +180,17 @@ def test_compiles_valid_traceable_candidate_with_versions_recorded() -> None:
     )
     assert any(t.kind == "NEGATIVE_APPLICABILITY" for t in b.tests)
     assert all(t.task_id is None or t.run_id in {x.run_id for x in ok + bad} for t in b.tests)
+
+
+def test_decision_step_cap_leaves_room_for_thinking_models_and_is_configurable() -> None:
+    from experience_engine.domain.capability import LlmDecision
+
+    def cap(cfg: CompilerConfig) -> int:
+        steps = compile_candidates(successes(4), cfg).candidates[0].definition.steps
+        return next(s for s in steps if isinstance(s, LlmDecision)).max_tokens
+
+    assert cap(CompilerConfig()) == 4000  # 2000 caused empty replies with a thinking model
+    assert cap(CompilerConfig(decision_max_tokens=1500)) == 1500
 
 
 def test_generation_is_deterministic_and_order_independent() -> None:
@@ -259,7 +270,7 @@ def test_procedure_hash_ignores_added_evidence_but_not_a_changed_procedure() -> 
     ).candidates[0]
     assert other_procedure.definition.id != base.definition.id
     v2 = compile_candidates(
-        successes(4), CompilerConfig(compiler_version="rule-compiler/2")
+        successes(4), CompilerConfig(compiler_version="rule-compiler/3")
     ).candidates[0]
     assert v2.definition.id == base.definition.id and v2.procedure_hash != base.procedure_hash
     assert procedure_hash(base.definition) == base.procedure_hash

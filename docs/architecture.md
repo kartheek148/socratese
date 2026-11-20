@@ -8,6 +8,8 @@
 
 > **Milestone 3 contract changes:** capability DSL/schema, `Trajectory`/`ExperienceCase`, run provenance tags and migration `0002`; see [capabilities.md](./capabilities.md), [schema.md](./schema.md) and [ADR 0006](./decisions/0006-m3-experience-and-capability-candidates.md).
 
+> **Milestone 4 contract changes:** executor, applicability, promotion policy, evaluation report, registry service/state machine and migration `0003`; see [evaluation.md](./evaluation.md), [schema.md](./schema.md) and [ADR 0007](./decisions/0007-m4-evaluator-and-registry.md).
+
 ## 1. Objective and non-goals
 
 ### Objective

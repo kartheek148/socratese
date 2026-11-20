@@ -330,6 +330,14 @@ capability_versions = sa.Table(
     ),
     sa.CheckConstraint("version >= 1", name="version_positive"),
     sa.Index("ix_capability_versions_tenant_id_state", "tenant_id", "state"),
+    # at most one ACTIVE version per capability, enforced by the database
+    sa.Index(
+        "uq_capability_versions_one_active",
+        "tenant_id",
+        "capability_id",
+        unique=True,
+        postgresql_where=sa.text("state = 'ACTIVE'"),
+    ),
 )
 
 capability_evidence = sa.Table(
@@ -373,6 +381,110 @@ cost_ledger = sa.Table(
     sa.Index("ix_cost_ledger_tenant_id_pipeline", "tenant_id", "pipeline"),
 )
 
+_VERSION_FK = (
+    ["tenant_id", "capability_id", "version"],
+    [
+        "capability_versions.tenant_id",
+        "capability_versions.capability_id",
+        "capability_versions.version",
+    ],
+)
+
+capability_evaluations = sa.Table(
+    "capability_evaluations",
+    metadata,
+    sa.Column("evaluation_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("capability_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("verdict", sa.Text, nullable=False),
+    sa.Column("risk_class", sa.Text, nullable=False),
+    sa.Column("policy_name", sa.Text, nullable=False),
+    sa.Column("policy_hash", sa.Text, nullable=False),
+    sa.Column("policy", JSONB, nullable=False),
+    sa.Column("source_replay_n", sa.Integer, nullable=False),
+    sa.Column("heldout_n", sa.Integer, nullable=False),
+    sa.Column("transfer_n", sa.Integer, nullable=False),
+    sa.Column("negative_n", sa.Integer, nullable=False),
+    sa.Column("regression_n", sa.Integer, nullable=False),
+    sa.Column("metrics", JSONB, nullable=False),
+    sa.Column("reasons", JSONB, nullable=False),
+    sa.Column("dataset_versions", JSONB, nullable=False),
+    sa.Column("model_settings", JSONB, nullable=False),
+    sa.Column("seeds", JSONB, nullable=False),
+    sa.Column("runtime_version", sa.Text, nullable=False),
+    sa.Column("verifier_version", sa.Text, nullable=False),
+    sa.Column("environment_version", sa.Text, nullable=False),
+    sa.Column("evaluator_version", sa.Text, nullable=False),
+    sa.Column("report_sha256", sa.Text, nullable=False),
+    sa.Column("started_at", _ts(), nullable=False),
+    sa.Column("completed_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_VERSION_FK),
+    sa.CheckConstraint("verdict IN ('PASS','FAIL','INCONCLUSIVE')", name="verdict"),
+    # Source-task replay alone can never produce a PASS: held-out, transfer and negative
+    # applicability evidence must exist.
+    sa.CheckConstraint(
+        "verdict <> 'PASS' OR (heldout_n > 0 AND transfer_n > 0 AND negative_n > 0)",
+        name="pass_requires_heldout_transfer_negative",
+    ),
+    sa.Index("ix_capability_evaluations_version", "tenant_id", "capability_id", "version"),
+)
+
+capability_transitions = sa.Table(
+    "capability_transitions",
+    metadata,
+    sa.Column("transition_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("capability_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("from_state", sa.Text, nullable=False),
+    sa.Column("to_state", sa.Text, nullable=False),
+    sa.Column("actor", sa.Text, nullable=False),
+    sa.Column("reason", sa.Text, nullable=False),
+    sa.Column("evaluation_id", _uuid()),
+    sa.Column("policy_hash", sa.Text),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_VERSION_FK),
+    sa.ForeignKeyConstraint(["evaluation_id"], ["capability_evaluations.evaluation_id"]),
+    sa.CheckConstraint("char_length(reason) <= 500", name="reason_bounded"),
+    sa.Index("ix_capability_transitions_version", "tenant_id", "capability_id", "version"),
+)
+
+capability_pointers = sa.Table(
+    "capability_pointers",
+    metadata,
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("capability_id", sa.Text, nullable=False),
+    sa.Column("active_version", sa.Integer),
+    sa.Column("previous_version", sa.Integer),
+    sa.Column("updated_at", _ts(), nullable=False),
+    sa.PrimaryKeyConstraint("tenant_id", "capability_id"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "capability_id"], ["capabilities.tenant_id", "capabilities.capability_id"]
+    ),
+)
+
+rollout_observations = sa.Table(
+    "rollout_observations",
+    metadata,
+    sa.Column("observation_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("capability_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("mode", sa.Text, nullable=False),
+    sa.Column("task_id", sa.Text, nullable=False),
+    sa.Column("capability_verified", sa.Boolean, nullable=False),
+    sa.Column("baseline_verified", sa.Boolean),
+    sa.Column("capability_tokens", sa.Integer, nullable=False),
+    sa.Column("baseline_tokens", sa.Integer),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_VERSION_FK),
+    sa.CheckConstraint("mode IN ('SHADOW','CANARY')", name="mode"),
+    sa.Index(
+        "ix_rollout_observations_version_mode", "tenant_id", "capability_id", "version", "mode"
+    ),
+)
+
 APPEND_ONLY_TABLES = (
     "trace_events",
     "run_outcomes",
@@ -381,4 +493,7 @@ APPEND_ONLY_TABLES = (
     "experience_cases",
     "capability_evidence",
     "cost_ledger",
+    "capability_evaluations",
+    "capability_transitions",
+    "rollout_observations",
 )

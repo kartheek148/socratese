@@ -44,7 +44,9 @@ ALLOWED_TRANSITIONS: dict[CapabilityState, frozenset[CapabilityState]] = {
     CapabilityState.CANARY: frozenset({CapabilityState.ACTIVE, CapabilityState.ROLLED_BACK}),
     CapabilityState.ACTIVE: frozenset({CapabilityState.DEPRECATED, CapabilityState.ROLLED_BACK}),
     CapabilityState.REJECTED: frozenset(),
-    CapabilityState.DEPRECATED: frozenset(),
+    # DEPRECATED -> ACTIVE is the restore step of a rollback to the previously active version; the
+    # registry only performs it as part of `rollback`, never as a standalone promotion.
+    CapabilityState.DEPRECATED: frozenset({CapabilityState.ACTIVE}),
     CapabilityState.ROLLED_BACK: frozenset(),
 }
 

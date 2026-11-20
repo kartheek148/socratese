@@ -90,7 +90,8 @@ def engine(database_url: str) -> Iterator[Engine]:
                 "TRUNCATE tasks, task_runs, artifacts, trace_events, run_outcomes, "
                 "policy_decisions, outbox_events, consumed_events, learning_jobs, "
                 "dead_letters, audit_log, experience_cases, capabilities, capability_versions, "
-                "capability_evidence, cost_ledger CASCADE"
+                "capability_evidence, cost_ledger, capability_evaluations, capability_transitions, "
+                "capability_pointers, rollout_observations CASCADE"
             )
         )
     yield eng

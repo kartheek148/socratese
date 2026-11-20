@@ -1,8 +1,10 @@
 import json
 import math
 import re
+from collections.abc import Mapping
 from typing import Any
 
+from experience_engine.ports.decisions import DecisionError, DecisionResult
 from experience_engine.ports.llm import LLMRequest, LLMResponse
 
 _OBS = re.compile(r"^OBSERVATION tool=(\w+) args=(\{.*?\}) ok=(true|false)\n(.*)$", re.DOTALL)
@@ -76,3 +78,33 @@ class HeuristicFakeLLM:
             if "upstream" in doc and "read_timeout_s" in doc["upstream"]:
                 return [(path, "upstream.read_timeout_s", math.ceil(target / 1000))]
         return None
+
+
+class HeuristicDecisionProvider:
+    """Deterministic scripted DecisionProvider for harness/evaluator validation (no model).
+
+    Like HeuristicFakeLLM it only knows the discovery/validation layouts, so on unseen layouts it
+    fails to produce a decision - which is exactly what a transfer test should expose.
+    """
+
+    def decide(
+        self,
+        *,
+        template_id: str,
+        objective: str,
+        inputs: Mapping[str, str],
+        output_schema: Mapping[str, Any],
+        max_tokens: int,
+    ) -> DecisionResult:
+        read = {
+            "app/config.json": inputs.get("config_text", ""),
+            "logs/app.log": inputs.get("log_text", ""),
+        }
+        plan = HeuristicFakeLLM._plan(read)
+        if plan is None:
+            raise DecisionError("no heuristic plan for this layout")
+        _path, key, value = plan[0]
+        return DecisionResult(
+            values={"key": key, "value": value},
+            tokens=sum(_words(v) for v in inputs.values()) + 20,
+        )
