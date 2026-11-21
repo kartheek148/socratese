@@ -165,4 +165,5 @@ def test_comparison_pairs_repeated_seeds_and_flags_experimental_catalogs() -> No
     assert "Paired runs: 3 over 1 tasks and seeds [0, 1, 2]" in text
     assert "both succeed 1, only C 2, only A 0, neither 0" in text
     assert "EXPERIMENTAL CATALOG" in text and "## By split and variant" in text
+    assert "## By task family" in text and "| A pool |" in text
     assert not compare_runs(a, a).changed and compare_runs(a, c).changed

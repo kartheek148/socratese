@@ -6,12 +6,17 @@ def _fmt(v: float | None, digits: int = 0) -> str:
     return "n/a" if v is None else f"{v:.{digits}f}"
 
 
+def _runs(m: ArmMetrics) -> str:
+    return str(m.n) if m.n_tasks in (None, m.n) else f"{m.n} ({m.n_tasks} tasks)"
+
+
 def _row(label: str, arm: str, m: ArmMetrics) -> str:
     extra = ""
     if m.applicable is not None:
         extra = f"applicable {m.applicable}/{m.n}"
     return (
-        f"| {label} | {arm} | {m.n} | {m.verified} | {m.rate:.0%} ({m.ci_low:.0%}-{m.ci_high:.0%}) "
+        f"| {label} | {arm} | {_runs(m)} | {m.verified} "
+        f"| {m.rate:.0%} ({m.ci_low:.0%}-{m.ci_high:.0%}) "
         f"| {_fmt(m.tokens_per_success)} | {_fmt(m.tool_calls_per_success, 1)} "
         f"| {m.latency_mean_ms:.0f} | {extra} |"
     )
@@ -49,7 +54,7 @@ def _render(report: EvaluationReport) -> str:
         "",
         "## Results",
         "",
-        "| Suite | Arm | Tasks | Verified | Success (95% Wilson CI) | Tokens / success "
+        "| Suite | Arm | Runs | Verified | Success (95% Wilson CI) | Tokens / success "
         "| Tool calls / success | Mean latency ms | Notes |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
@@ -86,6 +91,9 @@ def _render(report: EvaluationReport) -> str:
         "- Lifecycle cost charges the capability for the control-arm tokens spent evaluating it; "
         "amortization over future use is not credited here.",
         "- Small samples: treat differences within the confidence intervals as unproven.",
+        "- With several seeds every task is re-run once per seed. Those runs are correlated "
+        "(same task), so the Wilson intervals are optimistic; sample-size gates count distinct "
+        "tasks, not runs.",
         "",
     ]
     return "\n".join(lines)

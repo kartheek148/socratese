@@ -223,6 +223,13 @@ def _strategy_counts(records: list[BenchmarkRunRecord]) -> dict[str, int]:
     return counts
 
 
+def _family_rows(arm: str, records: list[BenchmarkRunRecord]) -> list[str]:
+    groups: dict[str, list[BenchmarkRunRecord]] = {}
+    for r in records:
+        groups.setdefault(r.tags.get("family", "?"), []).append(r)
+    return [_row(f"{arm} {fam}", summarize(rs)) for fam, rs in sorted(groups.items())]
+
+
 def _group_rows(arm: str, records: list[BenchmarkRunRecord]) -> list[str]:
     groups: dict[tuple[str, str], list[BenchmarkRunRecord]] = {}
     for r in records:
@@ -312,6 +319,15 @@ def render_comparison(
             if overlap
             else "**do not overlap**: the difference is unlikely to be chance."
         ),
+        "",
+        "## By task family",
+        "",
+        "Families with no ACTIVE capability are served by general planning in arm C, so their "
+        "A-vs-C difference measures run-to-run noise, not the capability.",
+        "",
+        header,
+        *_family_rows("A", a),
+        *_family_rows("C", c),
         "",
         "## By split and variant",
         "",

@@ -83,6 +83,8 @@ class ArmMetrics(_Frozen):
     # capability arm only
     applicable: int | None = None
     fell_back: int | None = None
+    # distinct tasks behind `n` runs (repeats of one task are correlated, not independent)
+    n_tasks: int | None = None
 
 
 class TaskResult(_Frozen):
@@ -97,6 +99,7 @@ class TaskResult(_Frozen):
     latency_ms: int
     applicable: bool | None = None
     termination: str | None = None
+    seed: int = 0  # repetition identifier: the same task is re-run once per seed
 
 
 class LifecycleCost(_Frozen):

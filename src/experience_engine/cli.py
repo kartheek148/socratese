@@ -68,7 +68,7 @@ def _cmd_generate(args: argparse.Namespace) -> int:
             )
             return 2
         try:
-            manifest = write_private_dataset(root, int(seed_text), args.dataset)
+            manifest = write_private_dataset(root, int(seed_text), args.dataset, args.scale)
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
@@ -229,6 +229,12 @@ def main(argv: list[str] | None = None) -> int:
 
     gen = sub.add_parser("generate", help="(re)generate the versioned dataset")
     gen.add_argument("--root", default="benchmarks/v1")
+    gen.add_argument(
+        "--scale",
+        type=int,
+        default=1,
+        help="multiply tasks per variant in the private validation/hidden splits",
+    )
     gen.add_argument(
         "--dataset",
         choices=sorted(DATASETS),

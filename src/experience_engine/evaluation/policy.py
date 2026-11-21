@@ -76,7 +76,9 @@ def decide_verdict(
         ("transfer", transfer, policy.min_transfer_n),
         ("negative-applicability", neg, policy.min_negative_n),
     ):
-        have = m.n if m else 0
+        # sample-size gates count distinct tasks: repeating a task over seeds adds precision
+        # about the model's variance, not new evidence about the capability
+        have = (m.n_tasks if m.n_tasks is not None else m.n) if m else 0
         if have < need:
             shortfalls.append(f"{label} suite has {have} tasks; policy requires at least {need}")
     if shortfalls or held is None or transfer is None or neg is None:

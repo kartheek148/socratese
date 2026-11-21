@@ -186,3 +186,14 @@ def test_private_v2_is_versioned_and_loadable(tmp_path: Path) -> None:
     loaded = DatasetLoader(COMMITTED_V2, EvaluatorAccess(), private_root=tmp_path)
     assert loaded.load(Split.HIDDEN_TRANSFER).version.n_tasks == 12
     assert loaded.load(Split.VALIDATION).version.version == "2.0.0-private"
+
+
+def test_scaled_private_suites_extend_rather_than_replace_the_base_suite(tmp_path: Path) -> None:
+    base = {t.task.task_id: t for t in generate_split(Split.VALIDATION, 77, "v2")}
+    big = {t.task.task_id: t for t in generate_split(Split.VALIDATION, 77, "v2", scale=3)}
+    assert len(big) == 3 * len(base) and set(base) < set(big)
+    assert all(big[k].model_dump_json() == v.model_dump_json() for k, v in base.items())
+    manifest = write_private_dataset(tmp_path, seed=77, dataset="v2", scale=3)
+    assert manifest["version"] == "2.0.0-private-x3"
+    with pytest.raises(ValueError, match="scale"):
+        generate_split(Split.VALIDATION, 77, "v2", scale=0)

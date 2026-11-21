@@ -23,7 +23,7 @@ Files: `benchmarks/v1/<split>/<task_id>.json` + `manifest.json` (per-file and pe
 
 ## Dataset v2 — harder, shared-evidence tasks (`connection-debug-sim` v2.0.0, generator `gen/2`)
 
-v1 hit a ceiling (the baseline solves ~86-100%), so it cannot show a benefit from learning. v2 keeps the tools, verifier (`sim-verifier/1`), environment (`sim-env/1`) and task families, and makes the answer depend on **combining evidence from several files**. v1 is frozen (its committed hashes are asserted by tests); v2 lives in `benchmarks/v2` and is generated with `ee-bench generate --dataset v2 --root benchmarks/v2` (private splits: `--dataset v2 --private`).
+v1 hit a ceiling (the baseline solves ~86-100%), so it cannot show a benefit from learning. v2 keeps the tools, verifier (`sim-verifier/1`), environment (`sim-env/1`) and task families, and makes the answer depend on **combining evidence from several files**. v1 is frozen (its committed hashes are asserted by tests); v2 lives in `benchmarks/v2` and is generated with `ee-bench generate --dataset v2 --root benchmarks/v2` (private splits: `--dataset v2 --private`, optionally `--scale N` to multiply the tasks per variant; task i of a scaled split equals task i of the base split).
 
 | Family | What the agent must combine | Shortcut that fails |
 |---|---|---|

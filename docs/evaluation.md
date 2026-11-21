@@ -62,7 +62,7 @@ CANDIDATE -> VALIDATING -> APPROVED -> SHADOW -> CANARY -> ACTIVE
 
 ```
 export EE_EVALUATOR_ROLE=evaluator EE_PRIVATE_DATASET_ROOT=/secure/path/ee-private   # see docs/benchmark.md
-uv run ee-eval evaluate --tenant bench --capability pool.<hash> --version 1 --llm vertex --out docs/eval.md
+uv run ee-eval evaluate --tenant bench --capability pool.<hash> --version 1 --llm vertex --seeds 0 1 --workers 8 --out docs/eval.md
 uv run ee-eval observe  --tenant bench --capability pool.<hash> --version 1 --mode SHADOW
 uv run ee-eval promote  --tenant bench --capability pool.<hash> --version 1 --to shadow|canary|active
 uv run ee-eval rollback --tenant bench --capability pool.<hash> --version 2 --reason "regression"
@@ -91,7 +91,7 @@ What this shows, and what it does not:
 
 ## Known limitations
 
-* Evaluation uses the simulated benchmark and very small suites (4 held-out, 4 transfer per family); confidence intervals are wide and one repetition/seed per task is used. Real-model results vary run to run.
+* Evaluation uses the simulated benchmark. `--seeds` re-runs every task once per seed and `--workers` runs them concurrently; with `ee-bench generate --private --scale N` suites can be made larger (v2 results used x3 and 2 seeds). Repeats of one task are correlated, so the Wilson intervals are optimistic and the sample-size gates (`min_*_n`) count **distinct tasks**. `max_regressions` is an absolute count and gets stricter as runs grow. Real-model results still vary run to run. First multi-seed results: [evaluations/v2-multiseed-evaluation-and-production-run.md](./evaluations/v2-multiseed-evaluation-and-production-run.md).
 * The memory-only control is a single-hint stand-in; a stronger memory baseline arrives with M7.
 * Shadow/canary use evaluator-driven observations on held-out tasks; live SHADOW/CANARY traffic routing is not wired (M5 serves ACTIVE versions only; adaptive rollout is M6).
 * No OS-level sandbox, no separate evaluator credentials/roles in the database yet (application-level and process-level separation only).

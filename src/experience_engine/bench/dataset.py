@@ -151,11 +151,17 @@ def _content_hash(file_hashes: dict[str, str]) -> str:
     return _sha("\n".join(f"{name}:{file_hashes[name]}" for name in sorted(file_hashes)))
 
 
-def generate_split(split: Split, seed: int = DEFAULT_SEED, dataset: str = "v1") -> list[BenchTask]:
+def generate_split(
+    split: Split, seed: int = DEFAULT_SEED, dataset: str = "v1", scale: int = 1
+) -> list[BenchTask]:
+    """`scale` multiplies the tasks per variant. Task i of a scaled split equals task i of the
+    unscaled one, so a larger suite extends a smaller one rather than replacing it."""
+    if scale < 1:
+        raise ValueError("scale must be >= 1")
     ds = DATASETS[dataset]
     tasks: list[BenchTask] = []
     for family, variant, count in ds.plan[split]:
-        for i in range(count):
+        for i in range(count * scale):
             task_id = f"{_PREFIX[split]}-{family}-{variant}-{i:02d}"
             rng = rng_for(DATASET_NAME, ds.version, seed, split.value, family, variant, i)
             spec, env = ds.makers[family](task_id, variant, rng)
@@ -164,7 +170,13 @@ def generate_split(split: Split, seed: int = DEFAULT_SEED, dataset: str = "v1") 
 
 
 def _write_splits(
-    root: Path, seed: int, splits: list[Split], version: str, record_seed: bool, dataset: str
+    root: Path,
+    seed: int,
+    splits: list[Split],
+    version: str,
+    record_seed: bool,
+    dataset: str,
+    scale: int = 1,
 ) -> dict[str, object]:
     manifest: dict[str, object] = {
         "dataset": DATASET_NAME,
@@ -179,7 +191,7 @@ def _write_splits(
         directory = root / split.value.lower()
         directory.mkdir(parents=True, exist_ok=True)
         hashes: dict[str, str] = {}
-        for task in generate_split(split, seed, dataset):
+        for task in generate_split(split, seed, dataset, scale):
             text = _serialize(task)
             name = f"{task.task.task_id}.json"
             (directory / name).write_text(text)
@@ -208,7 +220,9 @@ PRIVATE_SEED_ENV = "EE_PRIVATE_DATASET_SEED"
 PRIVATE_VERSION = f"{DATASET_VERSION}-private"
 
 
-def write_private_dataset(root: Path, seed: int, dataset: str = "v1") -> dict[str, object]:
+def write_private_dataset(
+    root: Path, seed: int, dataset: str = "v1", scale: int = 1
+) -> dict[str, object]:
     """VALIDATION and HIDDEN_TRANSFER regenerated from a secret seed, written outside the repo.
 
     The seed is never recorded in the manifest. Task numbers therefore cannot be reproduced from
@@ -220,9 +234,10 @@ def write_private_dataset(root: Path, seed: int, dataset: str = "v1") -> dict[st
         root,
         seed,
         [Split.VALIDATION, Split.HIDDEN_TRANSFER],
-        f"{DATASETS[dataset].version}-private",
+        f"{DATASETS[dataset].version}-private" + (f"-x{scale}" if scale > 1 else ""),
         record_seed=False,
         dataset=dataset,
+        scale=scale,
     )
 
 

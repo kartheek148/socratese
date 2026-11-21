@@ -7,6 +7,7 @@ the control-arm tokens spent evaluating it.
 """
 
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from experience_engine import RUNTIME_VERSION
@@ -53,14 +54,17 @@ class EvaluationPlan:
     datasets: dict[str, DatasetVersion]
     verifier_version: str
     model_settings: dict[str, object]
-    seeds: list[int]
+    seeds: list[int]  # every task is run once per seed (independent repetitions)
+    workers: int = 1  # concurrent runs; arms and tasks are stateless, results keep plan order
     learning_tokens: int = 0
     learning_wall_ms: int = 0
     max_negative_other_family: int = 4
     results: list[TaskResult] = field(default_factory=list)
 
 
-def _metrics(outcomes: Sequence[ArmOutcome], capability_arm: bool) -> ArmMetrics:
+def _metrics(
+    outcomes: Sequence[ArmOutcome], capability_arm: bool, n_tasks: int | None = None
+) -> ArmMetrics:
     n = len(outcomes)
     ok = sum(1 for o in outcomes if o.verified)
     tokens = sum(o.tokens for o in outcomes)
@@ -68,6 +72,7 @@ def _metrics(outcomes: Sequence[ArmOutcome], capability_arm: bool) -> ArmMetrics
     lo, hi = wilson_interval(ok, n)
     return ArmMetrics(
         n=n,
+        n_tasks=n_tasks,
         verified=ok,
         rate=ok / n if n else 0.0,
         ci_low=lo,
@@ -134,12 +139,24 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
         Suite.HELD_OUT: [t for t in plan.heldout_tasks if t.family == family],
         Suite.TRANSFER: [t for t in plan.transfer_tasks if t.family == family],
     }
-    results: dict[tuple[Suite, Arm, str], ArmOutcome] = {}
+    seeds = plan.seeds or [0]
+    results: dict[tuple[Suite, Arm, str, int], ArmOutcome] = {}
     suites: dict[str, dict[str, ArmMetrics]] = {}
     rows: list[TaskResult] = []
 
-    def record(suite: Suite, arm: Arm, t: BenchTask, o: ArmOutcome) -> None:
-        results[(suite, arm, t.task.task_id)] = o
+    def run_all(
+        jobs: Sequence[tuple[Suite, Arm, BenchTask, int]],
+    ) -> list[ArmOutcome]:
+        def one(job: tuple[Suite, Arm, BenchTask, int]) -> ArmOutcome:
+            return plan.arms[job[1]](job[2])
+
+        if plan.workers <= 1:
+            return [one(j) for j in jobs]
+        with ThreadPoolExecutor(max_workers=plan.workers) as pool:
+            return list(pool.map(one, jobs))
+
+    def record(suite: Suite, arm: Arm, t: BenchTask, o: ArmOutcome, seed: int) -> None:
+        results[(suite, arm, t.task.task_id, seed)] = o
         rows.append(
             TaskResult(
                 suite=suite,
@@ -153,33 +170,33 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
                 latency_ms=o.latency_ms,
                 applicable=o.applicable,
                 termination=o.termination,
+                seed=seed,
             )
         )
 
     for suite, tasks in suite_tasks.items():
-        per_arm: dict[str, list[ArmOutcome]] = {}
-        for arm, runner in plan.arms.items():
-            outs = []
-            for t in tasks:
-                o = runner(t)
-                record(suite, arm, t, o)
-                outs.append(o)
-            per_arm[arm.value] = outs
+        jobs = [(suite, arm, t, sd) for arm in plan.arms for t in tasks for sd in seeds]
+        per_arm: dict[str, list[ArmOutcome]] = {arm.value: [] for arm in plan.arms}
+        for job, o in zip(jobs, run_all(jobs), strict=True):
+            record(job[0], job[1], job[2], o, job[3])
+            per_arm[job[1].value].append(o)
         suites[suite.value] = {
-            a: _metrics(o, capability_arm=(a == Arm.CAPABILITY.value)) for a, o in per_arm.items()
+            a: _metrics(o, capability_arm=(a == Arm.CAPABILITY.value), n_tasks=len(tasks))
+            for a, o in per_arm.items()
         }
 
     # Negative applicability: the capability must refuse other families and precondition violations.
     others = list(plan.other_family_tasks)
     others = [t for t in others if t.family != family][: plan.max_negative_other_family]
     negatives = others + synthetic_negatives(d, suite_tasks[Suite.HELD_OUT])
-    cap_runner = plan.arms[Arm.CAPABILITY]
-    neg_outs = []
-    for t in negatives:
-        o = cap_runner(t)
-        record(Suite.NEGATIVE, Arm.CAPABILITY, t, o)
-        neg_outs.append(o)
-    suites[Suite.NEGATIVE.value] = {Arm.CAPABILITY.value: _metrics(neg_outs, True)}
+    # refusals are decided before any step runs, so one pass (seed 0) is enough
+    neg_jobs = [(Suite.NEGATIVE, Arm.CAPABILITY, t, seeds[0]) for t in negatives]
+    neg_outs = run_all(neg_jobs)
+    for job, o in zip(neg_jobs, neg_outs, strict=True):
+        record(job[0], job[1], job[2], o, job[3])
+    suites[Suite.NEGATIVE.value] = {
+        Arm.CAPABILITY.value: _metrics(neg_outs, True, n_tasks=len(negatives))
+    }
     # for the negative suite "verified" means a correct refusal
     refusals = sum(1 for o in neg_outs if o.applicable is False)
     base_neg = suites[Suite.NEGATIVE.value][Arm.CAPABILITY.value]
@@ -196,11 +213,12 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
     reg_cap: list[ArmOutcome] = []
     for suite in (Suite.SOURCE_REPLAY, Suite.HELD_OUT, Suite.TRANSFER):
         for t in suite_tasks[suite]:
-            base = results.get((suite, Arm.BASELINE, t.task.task_id))
-            cap = results.get((suite, Arm.CAPABILITY, t.task.task_id))
-            if base and cap and base.verified:
-                reg_cap.append(cap)
-                regressions += int(not cap.verified)
+            for sd in seeds:
+                base = results.get((suite, Arm.BASELINE, t.task.task_id, sd))
+                cap = results.get((suite, Arm.CAPABILITY, t.task.task_id, sd))
+                if base and cap and base.verified:
+                    reg_cap.append(cap)
+                    regressions += int(not cap.verified)
     suites[Suite.REGRESSION.value] = {Arm.CAPABILITY.value: _metrics(reg_cap, True)}
 
     # Lifecycle cost: learning + control-arm tokens spent evaluating C + C's own execution tokens.
@@ -245,7 +263,7 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
             for s, v in plan.datasets.items()
         },
         model_settings=plan.model_settings,
-        seeds=plan.seeds,
+        seeds=seeds,
         runtime_version=RUNTIME_VERSION,
         verifier_version=plan.verifier_version,
         environment_version=ENVIRONMENT_VERSION,

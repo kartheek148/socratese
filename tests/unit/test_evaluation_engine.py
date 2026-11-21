@@ -398,3 +398,75 @@ def test_evaluation_never_persists_task_runs_or_touches_learning_tables() -> Non
             ):
                 assert not {k.arg for k in node.keywords} & {"lifecycle", "artifacts"}, f.name
     assert json  # keep import used
+
+
+# ---- repetition across seeds and concurrency -------------------------------------------------
+def _arms(cap: object) -> dict[Arm, object]:
+    return {Arm.BASELINE: base_runner(KNOWN), Arm.MEMORY: base_runner(KNOWN), Arm.CAPABILITY: cap}
+
+
+def test_every_task_is_repeated_once_per_seed_and_metrics_keep_distinct_task_counts() -> None:
+    rep = evaluate(plan(_arms(cap_runner(ALL)), seeds=[0, 1, 2]))
+    held = rep.suites["HELD_OUT"]["C_CAPABILITY"]
+    assert (held.n, held.n_tasks) == (12, 4)  # 4 tasks x 3 seeds
+    assert rep.suites["SOURCE_REPLAY"]["A_BASELINE"].n == 18
+    assert rep.seeds == [0, 1, 2]
+    seeds_seen = {r.seed for r in rep.task_results if r.suite.value == "TRANSFER"}
+    assert seeds_seen == {0, 1, 2}
+    # refusals happen before any step runs: one pass, not one per seed
+    assert rep.suites["NEGATIVE"]["C_CAPABILITY"].n == 8
+    assert rep.suites["NEGATIVE"]["C_CAPABILITY"].n_tasks == 8
+
+
+def test_sample_size_gates_count_tasks_not_repeated_runs() -> None:
+    # 2 held-out tasks x 6 seeds = 12 runs would satisfy a runs-based gate of 4
+    held = [t for t in generate_split(Split.VALIDATION, DEFAULT_SEED) if t.family == "pool"][:2]
+    rep = evaluate(plan(_arms(cap_runner(ALL)), seeds=list(range(6)), heldout_tasks=held))
+    assert rep.suites["HELD_OUT"]["C_CAPABILITY"].n == 12
+    assert rep.verdict == Verdict.INCONCLUSIVE
+    assert any("held-out" in r for r in rep.reasons)
+
+
+def test_concurrent_runs_give_the_same_report_in_the_same_order() -> None:
+    import threading
+    import time
+
+    lock, active, peak = threading.Lock(), [0], [0]
+
+    def slow_cap(task):  # type: ignore[no-untyped-def]
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.005)
+        with lock:
+            active[0] -= 1
+        return cap_runner(ALL)(task)
+
+    serial = evaluate(plan(_arms(cap_runner(ALL)), seeds=[0, 1]))
+    parallel = evaluate(plan(_arms(slow_cap), seeds=[0, 1], workers=6))
+    assert peak[0] > 1  # it really ran concurrently
+    assert [(r.suite, r.arm, r.task_id, r.seed) for r in parallel.task_results] == [
+        (r.suite, r.arm, r.task_id, r.seed) for r in serial.task_results
+    ]
+    assert parallel.suites == serial.suites and parallel.verdict == serial.verdict
+
+
+def test_regressions_are_judged_per_task_and_seed() -> None:
+    calls: dict[str, int] = {}
+
+    def flaky_cap(task):  # type: ignore[no-untyped-def]
+        # fails only the second repetition of one task the baseline always solves
+        key = task.task.task_id
+        calls[key] = calls.get(key, 0) + 1
+        o = cap_runner(ALL)(task)
+        return out(False, applicable=True) if key.endswith("-00") and calls[key] == 2 else o
+
+    arms = _arms(flaky_cap)
+    arms[Arm.BASELINE] = base_runner(ALL)
+    rep = evaluate(plan(arms, seeds=[0, 1]))
+    assert rep.regressions >= 1
+
+
+def test_report_shows_runs_and_distinct_tasks_and_warns_about_correlation() -> None:
+    text = render_evaluation(evaluate(plan(_arms(cap_runner(ALL)), seeds=[0, 1])))
+    assert "8 (4 tasks)" in text and "correlated" in text

@@ -2,6 +2,7 @@
 (EE_EVALUATOR_ROLE=evaluator) - the opposite of ee-learn, which refuses it.
 
   ee-eval evaluate --tenant T --capability ID --version N [--llm fake|vertex] [--private-root DIR]
+  ee-eval evaluate ... [--seeds 0 1 2] [--workers 8]
   ee-eval observe  --tenant T --capability ID --version N --mode SHADOW|CANARY [--max-tasks K]
   ee-eval promote  --tenant T --capability ID --version N --to shadow|canary|active
   ee-eval rollback --tenant T --capability ID --version N --reason TEXT
@@ -143,7 +144,8 @@ def _cmd_evaluate(args: argparse.Namespace, ctx: "_Ctx") -> int:
         },
         verifier_version=verifier.version,
         model_settings=model.model_dump(mode="json"),
-        seeds=[args.seed],
+        seeds=args.seeds or [args.seed],
+        workers=args.workers,
         learning_tokens=tokens,
         learning_wall_ms=wall,
     )
@@ -275,6 +277,13 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--private-root", default=None)
     ev.add_argument("--seed", type=int, default=0)
     ev.add_argument("--max-tasks", type=int, default=0)
+    ev.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        help="run every task once per seed (independent repetitions); default: --seed only",
+    )
+    ev.add_argument("--workers", type=int, default=1, help="concurrent task runs")
     ev.add_argument("--out", default=None)
     ev.set_defaults(func=_cmd_evaluate)
 

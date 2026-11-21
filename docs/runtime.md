@@ -117,6 +117,9 @@ Roadmap gate "fresh-session transfer benchmark shows measurable value before pro
   the M4 evaluation and rollout. A harder benchmark with headroom (risk R3) is the most valuable
   input before relying on this for M6/M7 claims.
 
+## Production-mode result on dataset v2
+With `pool.f12f4fa920` ACTIVE (promoted through the unchanged gates), 48 fresh private tasks x 2 seeds, real Gemini: pool family 21% (baseline) -> 94% (capability runtime), tokens per success ~24.7k -> ~2.8k; the timeout family (no ACTIVE capability, general planning) is the noise control (35% vs 48%). See [evaluations/v2-multiseed-evaluation-and-production-run.md](./evaluations/v2-multiseed-evaluation-and-production-run.md). This supersedes the "correctness value not demonstrated" statement above, which applied to v1.
+
 ## Not in M5 (deferred)
 
 * Live SHADOW/CANARY routing of real tasks (`capabilities/rollout.py` exists; adaptive rollout is M6).
