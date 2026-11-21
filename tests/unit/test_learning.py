@@ -156,7 +156,7 @@ def test_compiles_valid_traceable_candidate_with_versions_recorded() -> None:
     assert sorted(d.provenance.source_run_ids) == sorted(t.run_id for t in ok)
     assert sorted(d.provenance.counterexample_run_ids) == sorted(t.run_id for t in bad)
     assert (
-        d.provenance.compiler_version == "rule-compiler/2"
+        d.provenance.compiler_version == "rule-compiler/3"
         and d.provenance.pipeline_version == "experience/1"
     )
     assert d.provenance.prompt_version is None and d.provenance.model_version is None
@@ -240,6 +240,50 @@ def test_low_support_steps_are_dropped_from_the_skeleton() -> None:
     assert lenient.definition.id != compile_candidates(data).candidates[0].definition.id
 
 
+NO_LOG = ("list_files", "read_file:config", "read_file:infra", "set_json_value:config")
+
+
+def _ids(data: list[Trajectory], **cfg: object) -> list[str]:
+    result = compile_candidates(data, CompilerConfig(**cfg))  # type: ignore[arg-type]
+    return [s.id for s in result.candidates[0].definition.steps]
+
+
+def test_a_read_that_only_successes_perform_is_added_even_below_skeleton_support() -> None:
+    # the log is read by 4 of 10 successes (40% < 60%) and by none of the 4 failures
+    data = (
+        successes(4)
+        + [traj(tokens=NO_LOG) for _ in range(6)]
+        + [traj(tokens=NO_LOG, status=STATUS.FAILURE) for _ in range(4)]
+    )
+    ids = _ids(data)
+    assert "read_log" in ids
+    d = compile_candidates(data).candidates[0].definition
+    assert any("read_file:log added by contrast" in lim for lim in d.known_limitations)
+    assert d.provenance.compiler_version == "rule-compiler/3"
+    # and without the contrast stage the old behaviour (v2) is unchanged
+    assert "read_log" not in _ids(data, contrast_min_failures=99)
+
+
+def test_contrast_never_adds_a_step_without_counterexamples_or_when_failures_also_do_it() -> None:
+    few = successes(4) + [traj(tokens=NO_LOG) for _ in range(6)]
+    assert "read_log" not in _ids(few)  # no failures at all
+    assert "read_log" not in _ids(
+        few + [traj(tokens=NO_LOG, status=STATUS.FAILURE) for _ in range(2)]
+    )  # too few failures to claim a contrast
+    also_failing = few + [traj(status=STATUS.FAILURE) for _ in range(4)]
+    assert "read_log" not in _ids(also_failing)  # failures read the log too: not discriminative
+
+
+def test_contrast_only_adds_read_only_steps_and_never_a_mutation() -> None:
+    # failures never mutate; the mutating token must not be "added" by contrast
+    ok = [
+        traj(tokens=("list_files", "read_file:config", "set_json_value:config")) for _ in range(3)
+    ] + [traj(tokens=("list_files", "read_file:config", "set_json_value:infra")) for _ in range(2)]
+    bad = [traj(tokens=("list_files", "read_file:config"), status=STATUS.FAILURE) for _ in range(4)]
+    ids = _ids(ok + bad)
+    assert ids.count("apply_fix") == 1  # only the 60%-support mutation of the config role
+
+
 def test_families_compile_separately_and_reference_each_other_in_negative_tests() -> None:
     pool = successes(4, family="pool")
     timeout = successes(
@@ -270,7 +314,7 @@ def test_procedure_hash_ignores_added_evidence_but_not_a_changed_procedure() -> 
     ).candidates[0]
     assert other_procedure.definition.id != base.definition.id
     v2 = compile_candidates(
-        successes(4), CompilerConfig(compiler_version="rule-compiler/3")
+        successes(4), CompilerConfig(compiler_version="rule-compiler/9")
     ).candidates[0]
     assert v2.definition.id == base.definition.id and v2.procedure_hash != base.procedure_hash
     assert procedure_hash(base.definition) == base.procedure_hash

@@ -60,7 +60,9 @@ from experience_engine.domain.outcome import OutcomeStatus
 from experience_engine.learning.contrast import contrast
 
 # v2: LLM_DECISION step cap 2000 -> 4000 (thinking models spend hidden tokens against the cap)
-COMPILER_VERSION = "rule-compiler/2"
+# v3: observation steps that discriminate successes from failures join the skeleton even when
+#     fewer than `skeleton_support` of the successes performed them (see `_discriminative_reads`)
+COMPILER_VERSION = "rule-compiler/3"
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 _FAMILY_RE = re.compile(r"[^a-z0-9]+")
 
@@ -70,6 +72,12 @@ class CompilerConfig:
     compiler_version: str = COMPILER_VERSION
     min_support: int = 3
     skeleton_support: float = 0.6
+    # contrast-added read steps: needs real counterexamples, and the read must be clearly more
+    # common in successes than in failures (never applied to mutating steps)
+    contrast_min_failures: int = 3
+    contrast_min_success_support: float = 0.3
+    contrast_max_failure_support: float = 0.2
+    contrast_min_gap: float = 0.3
     max_tests: int = 5
     max_listed_runs: int = 50
     decision_max_tokens: int = 4000
@@ -98,7 +106,35 @@ def _family_key(family: str) -> str:
     return _FAMILY_RE.sub("_", family.lower()).strip("_")[:40]
 
 
-def _skeleton(successes: Sequence[Trajectory], threshold: float) -> list[str]:
+def _discriminative_reads(
+    successes: Sequence[Trajectory], failures: Sequence[Trajectory], cfg: CompilerConfig
+) -> set[str]:
+    """Read-only observation steps that separate successes from failures.
+
+    The common core of the successes can miss exactly the step that matters: if failed runs
+    skipped reading a source of evidence that only some successful runs consulted, that read
+    sits below the support threshold. Adding a read cannot change the environment, so it is the
+    only kind of step the contrast may add; it is still a hypothesis the evaluator must confirm.
+    """
+    if len(failures) < cfg.contrast_min_failures or not successes:
+        return set()
+    out: set[str] = set()
+    for f in contrast(successes, failures, critical_success_min=0.0, gap=0.0):
+        tool = _tool_of(f.token)
+        if tool not in APPROVED_TOOLS or APPROVED_TOOLS[tool].mutating or ":" not in f.token:
+            continue
+        if (
+            f.success_support >= cfg.contrast_min_success_support
+            and f.failure_support <= cfg.contrast_max_failure_support
+            and f.success_support - f.failure_support >= cfg.contrast_min_gap
+        ):
+            out.add(f.token)
+    return out
+
+
+def _skeleton(
+    successes: Sequence[Trajectory], threshold: float, extra: frozenset[str] = frozenset()
+) -> list[str]:
     n = len(successes)
     positions: dict[str, list[int]] = {}
     for t in successes:
@@ -107,7 +143,11 @@ def _skeleton(successes: Sequence[Trajectory], threshold: float) -> list[str]:
             if token not in seen:
                 seen.add(token)
                 positions.setdefault(token, []).append(i)
-    kept = [(sum(p) / len(p), tok) for tok, p in positions.items() if len(p) / n >= threshold]
+    kept = [
+        (sum(p) / len(p), tok)
+        for tok, p in positions.items()
+        if len(p) / n >= threshold or tok in extra
+    ]
     return [tok for _, tok in sorted(kept)]
 
 
@@ -219,7 +259,8 @@ def _compile_family(
         return Rejection(
             family, f"insufficient_support: {len(successes)} verified successes < {cfg.min_support}"
         )
-    skeleton = _skeleton(successes, cfg.skeleton_support)
+    added = _discriminative_reads(successes, failures, cfg)
+    skeleton = _skeleton(successes, cfg.skeleton_support, frozenset(added))
     unapproved = sorted({_tool_of(t) for t in skeleton} - set(APPROVED_TOOLS))
     if unapproved:
         return Rejection(family, f"unapproved_tool: {','.join(unapproved)}")
@@ -245,6 +286,12 @@ def _compile_family(
         f"{len(shapes)} distinct config layouts observed.",
         "Steps are association-based hypotheses; effectiveness is unproven until evaluated.",
     ]
+    for token in sorted(added):
+        found = next(f for f in contrast(successes, failures) if f.token == token)
+        limitations.append(
+            f"Step {token} added by contrast although only {found.success_support:.0%} of "
+            f"successes performed it: failed runs did so in {found.failure_support:.0%}."
+        )
     if failures:
         limitations.append(
             f"{len(failures)} contrasting failed run(s); {claimed_false} of them claimed success "

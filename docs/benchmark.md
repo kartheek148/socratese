@@ -21,6 +21,25 @@ Files: `benchmarks/v1/<split>/<task_id>.json` + `manifest.json` (per-file and pe
 
 **Access guard.** `DISCOVERY` is loadable anonymously. `VALIDATION`/`HIDDEN_TRANSFER` need an `EvaluatorAccess` (`EE_EVALUATOR_ROLE=evaluator`). This is an application-level guard, **not** a security boundary — all splits are in this repository. **Before Milestone 3 the hidden split must move to storage the learning plane cannot read** (tracked in ADR 0004).
 
+## Dataset v2 — harder, shared-evidence tasks (`connection-debug-sim` v2.0.0, generator `gen/2`)
+
+v1 hit a ceiling (the baseline solves ~86-100%), so it cannot show a benefit from learning. v2 keeps the tools, verifier (`sim-verifier/1`), environment (`sim-env/1`) and task families, and makes the answer depend on **combining evidence from several files**. v1 is frozen (its committed hashes are asserted by tests); v2 lives in `benchmarks/v2` and is generated with `ee-bench generate --dataset v2 --root benchmarks/v2` (private splits: `--dataset v2 --private`).
+
+| Family | What the agent must combine | Shortcut that fails |
+|---|---|---|
+| `pool` (`*_shared`) | demand = workers × threads × **connections per request** (only in `logs/app.log`); ceiling = (`max_connections` − reserved − **other services**) ÷ **replicas** (only in `infra/db.json`) | sizing to `workers × threads` (v1 logic), or to the whole database |
+| `timeout` (`*_budget`) | timeout ≥ slowest **legitimate** call (log mixes `latency_ms=` and `took=…s`, plus a slow *other-client* decoy); ≤ budget ÷ (**retries** + 1) (the budget includes retries); ≤ 1.5 × slowest call (platform policy in `infra/gateway.json`) | covering the decoy, ignoring retries, or "use everything the budget allows" |
+
+| Split | Tasks | Variants |
+|---|---|---|
+| `DISCOVERY` | 16 | sqlalchemy_shared, psycopg_shared, httpx_budget, requests_budget (4 each) |
+| `VALIDATION` | 12 | same variants, new numbers (3 each) |
+| `HIDDEN_TRANSFER` | 12 | hikari_shared, okhttp_budget (6 each; new libraries, layouts, key names/units) |
+
+`tests/unit/test_dataset_v2.py` proves every task is **solvable from the files alone** (a reference solver that never sees the criteria) and that each shortcut above is rejected by the independent verifier. Dev splits in `benchmarks/v2` are public and therefore burned for evaluation; real validation/hidden data come from a secret seed outside the repository, exactly as for v1. `--llm fake` knows only the v1 layouts and fails on v2 by design.
+
+Measured on the private v2 splits (Gemini 2.5 Flash, 3 seeds): baseline **44%** validation and **28%** hidden-transfer, against 75-100% on v1 — see [evaluations/v2-benchmark-and-first-evaluations.md](./evaluations/v2-benchmark-and-first-evaluations.md).
+
 ## Verification
 
 `SimulationVerifier` (`bench/verifier.py`) sees only the final environment snapshot and the task's criteria; the agent's messages and final claim are not inputs. Criteria carry a role: *goal* or *guard*. Status: any unevaluable criterion → `UNKNOWN`; a failed guard → `FAILURE`; otherwise goals decide (`VERIFIED_SUCCESS` / `PARTIAL` / `FAILURE`). A provider outage (`LLM_ERROR`) that does not end in verified success is recorded as `UNKNOWN`, never as a failure. Success criteria are never shown to the agent.

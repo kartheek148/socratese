@@ -276,7 +276,7 @@ def test_full_lifecycle_new_version_activation_and_rollback_restores_previous(
     assert [d.version for d in env.caps.list_executable(TENANT)] == [1]
 
     # a new compiler version produces v2; it must earn promotion on its own evidence
-    env.compiler(compiler_version="rule-compiler/3").compile(TENANT)
+    env.compiler(compiler_version="rule-compiler/4").compile(TENANT)
     assert states(env)[(cap, 2)] == "CANDIDATE"
     assert [d.version for d in env.caps.list_executable(TENANT)] == [
         1
@@ -377,7 +377,7 @@ def test_registry_history_is_append_only_and_one_active_per_capability(env: Env)
     cap = caps["pool"]
     svc = service(env)
     store = SqlRegistryStore(env.engine)
-    env.compiler(compiler_version="rule-compiler/3").compile(TENANT)
+    env.compiler(compiler_version="rule-compiler/4").compile(TENANT)
     for v in (1, 2):
         svc.start_validation(TENANT, cap, v, "ev")
         svc.complete_evaluation(
@@ -443,7 +443,7 @@ def test_concurrent_activations_leave_exactly_one_active(env: Env) -> None:
     cap = caps["pool"]
     svc = service(env)
     store = SqlRegistryStore(env.engine)
-    env.compiler(compiler_version="rule-compiler/3").compile(TENANT)
+    env.compiler(compiler_version="rule-compiler/4").compile(TENANT)
     for v in (1, 2):
         svc.start_validation(TENANT, cap, v, "ev")
         svc.complete_evaluation(

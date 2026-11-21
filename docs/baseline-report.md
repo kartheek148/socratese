@@ -8,7 +8,7 @@ Configuration **A (fixed baseline, no persistent learning, no memory, no capabil
   - DISCOVERY: content hash `8170dc437881ac06…` (12 tasks)
   - HIDDEN_TRANSFER: content hash `e0efa6367a1bb8b0…` (8 tasks)
   - VALIDATION: content hash `0193090c4c31461b…` (8 tasks)
-- Seed: 0
+- Seeds: [0]
 - Provider / model: `fake` / `heuristic-fake/1` (temperature 0.0, seed 0, max output tokens 1024)
 - Prompt version: `sys-1`; runtime `baseline-runtime/0.1.0`; verifier `sim-verifier/1`; environment `sim-env/1`; policy `fixed-general-planning/1`
 - Learning cost: 0 (baseline performs no learning). Lifecycle cost equals execution cost.

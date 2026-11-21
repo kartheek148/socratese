@@ -9,6 +9,8 @@ hidden split must move to storage the learning plane cannot read (see docs/bench
 import hashlib
 import json
 import os
+import random
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +22,7 @@ from experience_engine.bench.families import (
     make_timeout_task,
     rng_for,
 )
+from experience_engine.bench.families_v2 import make_budget_timeout_task, make_shared_pool_task
 from experience_engine.domain.benchmark import DatasetVersion, Split
 from experience_engine.domain.task import TaskSpec
 
@@ -47,6 +50,57 @@ SPLIT_PLAN: dict[Split, list[tuple[str, str, int]]] = {
         ("pool", "hikari", 4),
         ("timeout", "okhttp", 4),
     ],
+}
+
+DATASET_VERSION_V2 = "2.0.0"
+GENERATOR_VERSION_V2 = "gen/2"
+SPLIT_PLAN_V2: dict[Split, list[tuple[str, str, int]]] = {
+    Split.DISCOVERY: [
+        ("pool", "sqlalchemy_shared", 4),
+        ("pool", "psycopg_shared", 4),
+        ("timeout", "httpx_budget", 4),
+        ("timeout", "requests_budget", 4),
+    ],
+    Split.VALIDATION: [
+        ("pool", "sqlalchemy_shared", 3),
+        ("pool", "psycopg_shared", 3),
+        ("timeout", "httpx_budget", 3),
+        ("timeout", "requests_budget", 3),
+    ],
+    Split.HIDDEN_TRANSFER: [
+        ("pool", "hikari_shared", 6),
+        ("timeout", "okhttp_budget", 6),
+    ],
+}
+Maker = Callable[[str, str, random.Random], tuple[TaskSpec, EnvironmentSpec]]
+
+
+@dataclass(frozen=True)
+class DatasetSpec:
+    """One dataset generation: v1 is frozen (its committed hashes must never change)."""
+
+    key: str
+    version: str
+    generator_version: str
+    plan: dict[Split, list[tuple[str, str, int]]]
+    makers: dict[str, Maker]
+
+
+DATASETS: dict[str, DatasetSpec] = {
+    "v1": DatasetSpec(
+        "v1",
+        DATASET_VERSION,
+        GENERATOR_VERSION,
+        SPLIT_PLAN,
+        {"pool": make_pool_task, "timeout": make_timeout_task},
+    ),
+    "v2": DatasetSpec(
+        "v2",
+        DATASET_VERSION_V2,
+        GENERATOR_VERSION_V2,
+        SPLIT_PLAN_V2,
+        {"pool": make_shared_pool_task, "timeout": make_budget_timeout_task},
+    ),
 }
 _PREFIX = {Split.DISCOVERY: "disc", Split.VALIDATION: "val", Split.HIDDEN_TRANSFER: "hid"}
 
@@ -97,25 +151,25 @@ def _content_hash(file_hashes: dict[str, str]) -> str:
     return _sha("\n".join(f"{name}:{file_hashes[name]}" for name in sorted(file_hashes)))
 
 
-def generate_split(split: Split, seed: int = DEFAULT_SEED) -> list[BenchTask]:
+def generate_split(split: Split, seed: int = DEFAULT_SEED, dataset: str = "v1") -> list[BenchTask]:
+    ds = DATASETS[dataset]
     tasks: list[BenchTask] = []
-    for family, variant, count in SPLIT_PLAN[split]:
+    for family, variant, count in ds.plan[split]:
         for i in range(count):
             task_id = f"{_PREFIX[split]}-{family}-{variant}-{i:02d}"
-            rng = rng_for(DATASET_NAME, DATASET_VERSION, seed, split.value, family, variant, i)
-            make = make_pool_task if family == "pool" else make_timeout_task
-            spec, env = make(task_id, variant, rng)
+            rng = rng_for(DATASET_NAME, ds.version, seed, split.value, family, variant, i)
+            spec, env = ds.makers[family](task_id, variant, rng)
             tasks.append(BenchTask(task=spec, environment=env, family=family, variant=variant))
     return tasks
 
 
 def _write_splits(
-    root: Path, seed: int, splits: list[Split], version: str, record_seed: bool
+    root: Path, seed: int, splits: list[Split], version: str, record_seed: bool, dataset: str
 ) -> dict[str, object]:
     manifest: dict[str, object] = {
         "dataset": DATASET_NAME,
         "version": version,
-        "generator_version": GENERATOR_VERSION,
+        "generator_version": DATASETS[dataset].generator_version,
         "splits": {},
     }
     if record_seed:
@@ -125,7 +179,7 @@ def _write_splits(
         directory = root / split.value.lower()
         directory.mkdir(parents=True, exist_ok=True)
         hashes: dict[str, str] = {}
-        for task in generate_split(split, seed):
+        for task in generate_split(split, seed, dataset):
             text = _serialize(task)
             name = f"{task.task.task_id}.json"
             (directory / name).write_text(text)
@@ -140,19 +194,21 @@ def _write_splits(
     return manifest
 
 
-def write_dataset(root: Path, seed: int = DEFAULT_SEED) -> dict[str, object]:
+def write_dataset(root: Path, seed: int = DEFAULT_SEED, dataset: str = "v1") -> dict[str, object]:
     """Development dataset (all splits public). Its hidden split is *burned*: the data and the
     seed are in git history, so it must only be used for baselines/regression, never as a hidden
     evaluation set. Use `write_private_dataset` for real validation/transfer evaluation.
     """
-    return _write_splits(root, seed, list(Split), DATASET_VERSION, record_seed=True)
+    return _write_splits(
+        root, seed, list(Split), DATASETS[dataset].version, record_seed=True, dataset=dataset
+    )
 
 
 PRIVATE_SEED_ENV = "EE_PRIVATE_DATASET_SEED"
 PRIVATE_VERSION = f"{DATASET_VERSION}-private"
 
 
-def write_private_dataset(root: Path, seed: int) -> dict[str, object]:
+def write_private_dataset(root: Path, seed: int, dataset: str = "v1") -> dict[str, object]:
     """VALIDATION and HIDDEN_TRANSFER regenerated from a secret seed, written outside the repo.
 
     The seed is never recorded in the manifest. Task numbers therefore cannot be reproduced from
@@ -161,7 +217,12 @@ def write_private_dataset(root: Path, seed: int) -> dict[str, object]:
     if seed == DEFAULT_SEED:
         raise ValueError("the private seed must differ from the public development seed")
     return _write_splits(
-        root, seed, [Split.VALIDATION, Split.HIDDEN_TRANSFER], PRIVATE_VERSION, record_seed=False
+        root,
+        seed,
+        [Split.VALIDATION, Split.HIDDEN_TRANSFER],
+        f"{DATASETS[dataset].version}-private",
+        record_seed=False,
+        dataset=dataset,
     )
 
 

@@ -1,0 +1,85 @@
+{
+  "environment": {
+    "files": {
+      "config/application.json": "{\n  \"server\": {\n    \"tomcat\": {\n      \"threads\": {\n        \"max\": 9\n      }\n    }\n  },\n  \"spring\": {\n    \"datasource\": {\n      \"hikari\": {\n        \"maximumPoolSize\": 6,\n        \"connectionTimeout\": 30000\n      }\n    }\n  }\n}",
+      "infra/db.json": "{\n  \"engine\": \"postgres\",\n  \"max_connections\": 165,\n  \"reserved_connections\": 5,\n  \"service_replicas\": 4,\n  \"other_services_connections\": {\n    \"billing\": 10,\n    \"reports\": 10\n  }\n}",
+      "logs/app.log": "2025-03-01T10:00:00Z INFO request ok route=/orders id=7932 db_connections=3\n2025-03-01T10:00:01Z INFO request ok route=/orders id=2173 db_connections=3\n2025-03-01T10:00:02Z INFO request ok route=/orders id=5478 db_connections=3\n2025-03-01T10:00:03Z ERROR HikariPool-1 - Connection is not available, request timed out after 30000ms (total=6, active=6, idle=0)\n2025-03-01T10:00:04Z ERROR HikariPool-1 - Connection is not available, request timed out after 30000ms (total=6, active=6, idle=0)\n2025-03-01T10:00:05Z ERROR HikariPool-1 - Connection is not available, request timed out after 30000ms (total=6, active=6, idle=0)\n2025-03-01T10:00:06Z INFO request ok route=/orders id=8837 db_connections=3\n2025-03-01T10:00:07Z INFO request ok route=/orders id=6516 db_connections=3\n2025-03-01T10:00:08Z INFO request ok route=/orders id=8816 db_connections=3"
+    }
+  },
+  "family": "pool",
+  "task": {
+    "allowed_tools": [
+      "list_files",
+      "read_file",
+      "set_json_value"
+    ],
+    "context_refs": [],
+    "deadline_ms": 300000,
+    "inputs": {
+      "service": "orders-api"
+    },
+    "max_steps": 12,
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "objective": "The service intermittently fails with database connection-pool timeouts under load. Each running replica of the service has its own connection pool, and the database is shared with other services. Investigate the logs and configuration and fix this service's pool size so one replica's pool can serve that replica's concurrent demand (including every connection a request holds at once) while all replicas together stay within what the database can give this service. Files under infra/ are managed by another team and must not change; do not reduce the service's concurrency to hide the problem.",
+    "risk_level": "low",
+    "success_criteria": [
+      {
+        "capacity_keys": [
+          "spring.datasource.hikari.maximumPoolSize"
+        ],
+        "config_path": "config/application.json",
+        "kind": "pool_capacity",
+        "max_capacity": 35,
+        "min_capacity": 27,
+        "role": "goal"
+      },
+      {
+        "expected": 165,
+        "key": "max_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 5,
+        "key": "reserved_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 4,
+        "key": "service_replicas",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 10,
+        "key": "other_services_connections.billing",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 10,
+        "key": "other_services_connections.reports",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 9,
+        "key": "server.tomcat.threads.max",
+        "kind": "value_unchanged",
+        "path": "config/application.json",
+        "role": "guard"
+      }
+    ],
+    "task_family": "pool",
+    "task_id": "hid-pool-hikari_shared-00",
+    "tenant_id": "bench"
+  },
+  "variant": "hikari_shared"
+}

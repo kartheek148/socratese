@@ -136,7 +136,7 @@ def test_trace_to_candidate_end_to_end_with_provenance_and_cost(env: Env) -> Non
     assert len(versions) == 2 and {s for _, s in versions} == {CapabilityState.CANDIDATE}
     for definition, _ in versions:
         assert set(definition.provenance.source_run_ids) <= set(runs)
-        assert definition.provenance.compiler_version == "rule-compiler/2"
+        assert definition.provenance.compiler_version == "rule-compiler/3"
         assert (definition.provenance.dataset_name, definition.provenance.dataset_version) == (
             "ds",
             "1",
@@ -187,8 +187,8 @@ def test_changed_procedure_creates_new_immutable_version_keeping_the_old(env: En
     env.persist(Split.DISCOVERY)
     env.deliver_events()
     env.process_jobs()
-    env.compiler().compile("acme")
-    v2 = env.compiler(compiler_version="rule-compiler/3").compile("acme")
+    env.compiler(compiler_version="rule-compiler/2").compile("acme")
+    v2 = env.compiler().compile("acme")
     assert [r.kind for r in v2.registered] == [RegistrationKind.NEW_VERSION] * 2
     assert sorted(r.version for r in v2.registered) == [2, 2]
     assert count(env.engine, t.capability_versions) == 4

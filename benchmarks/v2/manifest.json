@@ -1,0 +1,66 @@
+{
+  "dataset": "connection-debug-sim",
+  "generator_version": "gen/2",
+  "seed": 20260101,
+  "splits": {
+    "DISCOVERY": {
+      "content_hash": "7d96f8fc39a2466507149a9d51fd5c1dacb503f12c933d6ab3c7bd63f1898b21",
+      "files": {
+        "disc-pool-psycopg_shared-00.json": "c83be8ae85a3aca2d73d94f86c61b0fd3921166c554cb9a938ac45c913a5324c",
+        "disc-pool-psycopg_shared-01.json": "4e20b212551e857bd67120414d5079a269ce468d71471ba804faad717e06cb5b",
+        "disc-pool-psycopg_shared-02.json": "570adf09cbeebdbb495ca51376749386e972dd1d448d60606c2e0ca646dca48a",
+        "disc-pool-psycopg_shared-03.json": "2e096248b67f57d1a524b0f436d6896c1b2fcc1b3d9fe15b4ba2c20cbfa8f9da",
+        "disc-pool-sqlalchemy_shared-00.json": "828c4b4d2128599cc6ec1b51e5726a02a603c446b558c4c64b602a28d7552117",
+        "disc-pool-sqlalchemy_shared-01.json": "d2429da476ee1e871058c00f4532781a4a7678cb599a46cabdeae44f2b4e1408",
+        "disc-pool-sqlalchemy_shared-02.json": "d9422340fe83e867b9838c6cb3e70707504fda5f43b15c129e1767c944626a84",
+        "disc-pool-sqlalchemy_shared-03.json": "c2903826072d643f6525b8b0fe1cd48173721e857f97049a61b63fa7921c9e4d",
+        "disc-timeout-httpx_budget-00.json": "d34ae197a914812054021dfac6cf42d8f68be9503ebff3bcfbbc5b26b7bf5ce7",
+        "disc-timeout-httpx_budget-01.json": "c69a69722068a7eb17a4cfd35867003a6b29f468d1f70957d8e6728750548cd5",
+        "disc-timeout-httpx_budget-02.json": "c3193f5b0f4f7c752236b19a5402ae074f3ac5231ef26215eb8f1ef18c26e708",
+        "disc-timeout-httpx_budget-03.json": "652a522c3d007eef342ea0d45ee7041507a5238ed5af7cc48b769b00de7413ee",
+        "disc-timeout-requests_budget-00.json": "10484dbc65c3b08baaf9c0fa4fa98e985124d74e495e2287f8ffa87a0dcb0b84",
+        "disc-timeout-requests_budget-01.json": "c9b19929a16321d5652fba6986b70c3cb7e32ba6d9d5c5e0b9df8f6a11922f18",
+        "disc-timeout-requests_budget-02.json": "1b44e344db23bb2c541424e5cc92e1d197ebbc997e8c6b05cd4fe4fb3dbf7ad1",
+        "disc-timeout-requests_budget-03.json": "ce36e4b7c775ceccad1890880146d878d76957794ef30ac23e64e2e7d178f9e5"
+      },
+      "n_tasks": 16
+    },
+    "HIDDEN_TRANSFER": {
+      "content_hash": "1bb1a5e82aa6903c6de8546f62c18b13b6b555bc8b58409b5381e9d45ab51500",
+      "files": {
+        "hid-pool-hikari_shared-00.json": "0098787e8bb24c992843f97758b6b9b54b9b4ab00b6374e152dedabb2d88a962",
+        "hid-pool-hikari_shared-01.json": "2aa464f7affc328ecf685e5d9ff45b7bf4ec790691bbffa96633b3521a94a289",
+        "hid-pool-hikari_shared-02.json": "864a253019f558db65453169a20c6801b80c380798eada81ecb98ec328837d96",
+        "hid-pool-hikari_shared-03.json": "9f267c55d849b7b25370367325e28352330172fd887b5e1a105f8dc00a76bb0e",
+        "hid-pool-hikari_shared-04.json": "81ba451b58ad0ba51c6a31ae75f685d62693b22d52dd3e2115fed1f96e79e87e",
+        "hid-pool-hikari_shared-05.json": "92deb62416350504dfc20fc319495b456d48a163a1ba133eb826f1b63f5db088",
+        "hid-timeout-okhttp_budget-00.json": "8a5d8ddee57c5410a9e86a26a731f4d0ace94a4e30ae398088460ccd8c1ebe96",
+        "hid-timeout-okhttp_budget-01.json": "5a3b7e10ec66296aec52222a2b249d32811ee706cfaf610fa3aeb8620981bd39",
+        "hid-timeout-okhttp_budget-02.json": "4f6577fab8930866fb0ffcd48db920b589a60916f51cbe11cc3c639011fe527b",
+        "hid-timeout-okhttp_budget-03.json": "7b8d8c1c5e01aa69cf36770ce2420ab3f12d771dc31a6d1e440599ab8e19bcf8",
+        "hid-timeout-okhttp_budget-04.json": "b483055a1e6ff111fae6a833bf5b0d1e9f184d67b25903b6f53d850738bd46af",
+        "hid-timeout-okhttp_budget-05.json": "61af2e5c80d3475021e9e745902527ad5c58f1b95ffeb803c24e24095c437425"
+      },
+      "n_tasks": 12
+    },
+    "VALIDATION": {
+      "content_hash": "a2bbf7f566b868bd79f44ccb06bc0b42d48a2e6b3ec6ea449144d0cd53394ee7",
+      "files": {
+        "val-pool-psycopg_shared-00.json": "f384ce76d2d1f9ee44a12813fb15603ee387b597097f97180fc013a3a7974a0c",
+        "val-pool-psycopg_shared-01.json": "81a7e5f7d3d12c0a015456de02c271cb3be11433914be0190d1a01c1266d4dd5",
+        "val-pool-psycopg_shared-02.json": "c1150c0dacf63379b6c09a0c3d6cd3a92fc9e1ff205ca21ec60ecc8082653755",
+        "val-pool-sqlalchemy_shared-00.json": "5b714cf34ef4a06dbe21190e0b04f451f9a7beb80cf6d43f6d4b449d472ab89d",
+        "val-pool-sqlalchemy_shared-01.json": "425a55be7c2497163fa79eeab89e47d5ca8b1d3f0b96d4f496a99e5b7936468f",
+        "val-pool-sqlalchemy_shared-02.json": "1130255b8da283a8235e6ec7ff4f54e9a35c9b44a3fdac1e6d54d3c946937980",
+        "val-timeout-httpx_budget-00.json": "643ddb35964fcdbb6aa63b583eec34f698bc11b26859610fc2d7d5ac12158152",
+        "val-timeout-httpx_budget-01.json": "e98d094ce089293fcc1bee82b6a71f2d7d8a3819f63795b41e3c0ba194807fa2",
+        "val-timeout-httpx_budget-02.json": "ffbad52af0752c067c6fddbef12388b19da2ec84a63099cc0c816471325838cd",
+        "val-timeout-requests_budget-00.json": "ab303b3f825f983dafff3ca14a4b9074adf189e75c077c79851f4ff5ac7f91b1",
+        "val-timeout-requests_budget-01.json": "4ae258e8e1d282eeaac639bd9663546bdfb0038a9235bc89ff19945c914b9260",
+        "val-timeout-requests_budget-02.json": "d4bc75dd7b7350c610bda94af0f27d7510b045734cd20b901665053b5fc4a09d"
+      },
+      "n_tasks": 12
+    }
+  },
+  "version": "2.0.0"
+}

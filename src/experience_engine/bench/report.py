@@ -130,7 +130,7 @@ def render_report(records: list[BenchmarkRunRecord], *, title: str = "Baseline r
             f"({rs[0].dataset.n_tasks} tasks)"
             for split, rs in sorted(by_split.items())
         ),
-        f"- Seed: {first.seed}",
+        f"- Seeds: {sorted({r.seed for r in records})}",
         f"- Provider / model: `{model.provider}` / `{model.model}` "
         f"(temperature {model.temperature}, seed {model.seed}, "
         f"max output tokens {model.max_output_tokens})",
@@ -195,9 +195,14 @@ class Comparison:
     summary_b: Summary
 
 
+def _pair_key(r: BenchmarkRunRecord) -> str:
+    """One run per (task, seed): repeated seeds of the same task are separate paired samples."""
+    return f"{r.tags['task_id']}#seed{r.seed}"
+
+
 def compare_runs(a: list[BenchmarkRunRecord], b: list[BenchmarkRunRecord]) -> Comparison:
-    da = {r.tags["task_id"]: r.digest() for r in a}
-    db = {r.tags["task_id"]: r.digest() for r in b}
+    da = {_pair_key(r): r.digest() for r in a}
+    db = {_pair_key(r): r.digest() for r in b}
     changed = sorted(k for k in da.keys() & db.keys() if da[k] != db[k])
     only_a, only_b = sorted(da.keys() - db.keys()), sorted(db.keys() - da.keys())
     return Comparison(
@@ -218,6 +223,13 @@ def _strategy_counts(records: list[BenchmarkRunRecord]) -> dict[str, int]:
     return counts
 
 
+def _group_rows(arm: str, records: list[BenchmarkRunRecord]) -> list[str]:
+    groups: dict[tuple[str, str], list[BenchmarkRunRecord]] = {}
+    for r in records:
+        groups.setdefault((r.dataset.split.value, r.tags.get("variant", "?")), []).append(r)
+    return [_row(f"{arm} {sp} / {v}", summarize(rs)) for (sp, v), rs in sorted(groups.items())]
+
+
 def render_comparison(
     baseline: list[BenchmarkRunRecord],
     candidate: list[BenchmarkRunRecord],
@@ -227,8 +239,8 @@ def render_comparison(
     """Paired comparison of arm A (baseline) and arm C (capability runtime) on the same tasks."""
     if not baseline or not candidate:
         raise ValueError("both arms need records")
-    a_by = {r.tags["task_id"]: r for r in baseline}
-    c_by = {r.tags["task_id"]: r for r in candidate}
+    a_by = {_pair_key(r): r for r in baseline}
+    c_by = {_pair_key(r): r for r in candidate}
     shared = sorted(a_by.keys() & c_by.keys())
     if not shared:
         raise ValueError("the two arms share no tasks")
@@ -277,12 +289,14 @@ def render_comparison(
     lines += [
         "## Setup",
         "",
-        f"- Paired tasks: {len(shared)} (identical task and environment per arm; every run in a "
+        f"- Paired runs: {len(shared)} over {len({k.split('#')[0] for k in shared})} tasks and "
+        f"seeds {sorted({a_by[k].seed for k in shared})} (identical task and environment per arm; "
+        "every run in a "
         "fresh session; arm C sees only capabilities in the catalog, no transcripts).",
         f"- Arm A: `{a[0].config.config_id}`, policy `{a[0].decision.policy_version}`.",
         f"- Arm C: `{first.config.config_id}`, policy `{first.decision.policy_version}`.",
         f"- Model: `{first.config.model.provider}` / `{first.config.model.model}`.",
-        f"- Dataset: `{first.dataset.name}` v{first.dataset.version}, seed {first.seed}.",
+        f"- Dataset: `{first.dataset.name}` v{first.dataset.version}.",
         "",
         "## Outcomes",
         "",
@@ -298,6 +312,12 @@ def render_comparison(
             if overlap
             else "**do not overlap**: the difference is unlikely to be chance."
         ),
+        "",
+        "## By split and variant",
+        "",
+        header,
+        *_group_rows("A", a),
+        *_group_rows("C", c),
         "",
         "## Capability usage (arm C)",
         "",

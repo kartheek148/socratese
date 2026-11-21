@@ -1,0 +1,93 @@
+{
+  "environment": {
+    "files": {
+      "app/config.json": "{\n  \"server\": {\n    \"workers\": 2,\n    \"threads_per_worker\": 5\n  },\n  \"database\": {\n    \"url\": \"postgresql://app@db.internal/app\",\n    \"pool_size\": 5,\n    \"max_overflow\": 0,\n    \"pool_timeout_s\": 30\n  }\n}",
+      "infra/db.json": "{\n  \"engine\": \"postgres\",\n  \"max_connections\": 82,\n  \"reserved_connections\": 10,\n  \"service_replicas\": 2,\n  \"other_services_connections\": {\n    \"billing\": 15,\n    \"reports\": 10\n  }\n}",
+      "logs/app.log": "2025-03-01T10:00:00Z INFO request ok route=/orders id=9320 db_connections=2\n2025-03-01T10:00:01Z INFO request ok route=/orders id=9911 db_connections=2\n2025-03-01T10:00:02Z INFO request ok route=/orders id=3775 db_connections=2\n2025-03-01T10:00:03Z ERROR sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 0 reached, connection timed out, timeout 30.00\n2025-03-01T10:00:04Z ERROR sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 0 reached, connection timed out, timeout 30.00\n2025-03-01T10:00:05Z ERROR sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 0 reached, connection timed out, timeout 30.00\n2025-03-01T10:00:06Z INFO request ok route=/orders id=2562 db_connections=2\n2025-03-01T10:00:07Z INFO request ok route=/orders id=8494 db_connections=2\n2025-03-01T10:00:08Z INFO request ok route=/orders id=5558 db_connections=2"
+    }
+  },
+  "family": "pool",
+  "task": {
+    "allowed_tools": [
+      "list_files",
+      "read_file",
+      "set_json_value"
+    ],
+    "context_refs": [],
+    "deadline_ms": 300000,
+    "inputs": {
+      "service": "orders-api"
+    },
+    "max_steps": 12,
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "objective": "The service intermittently fails with database connection-pool timeouts under load. Each running replica of the service has its own connection pool, and the database is shared with other services. Investigate the logs and configuration and fix this service's pool size so one replica's pool can serve that replica's concurrent demand (including every connection a request holds at once) while all replicas together stay within what the database can give this service. Files under infra/ are managed by another team and must not change; do not reduce the service's concurrency to hide the problem.",
+    "risk_level": "low",
+    "success_criteria": [
+      {
+        "capacity_keys": [
+          "database.pool_size",
+          "database.max_overflow"
+        ],
+        "config_path": "app/config.json",
+        "kind": "pool_capacity",
+        "max_capacity": 23,
+        "min_capacity": 20,
+        "role": "goal"
+      },
+      {
+        "expected": 82,
+        "key": "max_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 10,
+        "key": "reserved_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 2,
+        "key": "service_replicas",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 15,
+        "key": "other_services_connections.billing",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 10,
+        "key": "other_services_connections.reports",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 2,
+        "key": "server.workers",
+        "kind": "value_unchanged",
+        "path": "app/config.json",
+        "role": "guard"
+      },
+      {
+        "expected": 5,
+        "key": "server.threads_per_worker",
+        "kind": "value_unchanged",
+        "path": "app/config.json",
+        "role": "guard"
+      }
+    ],
+    "task_family": "pool",
+    "task_id": "disc-pool-sqlalchemy_shared-02",
+    "tenant_id": "bench"
+  },
+  "variant": "sqlalchemy_shared"
+}

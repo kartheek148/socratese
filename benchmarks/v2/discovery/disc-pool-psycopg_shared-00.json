@@ -1,0 +1,92 @@
+{
+  "environment": {
+    "files": {
+      "app/settings.json": "{\n  \"workers\": 2,\n  \"threads\": 5,\n  \"db\": {\n    \"dsn\": \"postgresql://app@db.internal/app\",\n    \"min_size\": 1,\n    \"max_size\": 5,\n    \"timeout\": 30\n  }\n}",
+      "infra/db.json": "{\n  \"engine\": \"postgres\",\n  \"max_connections\": 111,\n  \"reserved_connections\": 5,\n  \"service_replicas\": 3,\n  \"other_services_connections\": {\n    \"billing\": 15,\n    \"reports\": 10\n  }\n}",
+      "logs/app.log": "2025-03-01T10:00:00Z INFO request ok route=/orders id=4990 db_connections=2\n2025-03-01T10:00:01Z INFO request ok route=/orders id=8241 db_connections=2\n2025-03-01T10:00:02Z INFO request ok route=/orders id=9132 db_connections=2\n2025-03-01T10:00:03Z ERROR psycopg_pool.PoolTimeout: couldn't get a connection after 30.00 sec (pool max_size=5)\n2025-03-01T10:00:04Z ERROR psycopg_pool.PoolTimeout: couldn't get a connection after 30.00 sec (pool max_size=5)\n2025-03-01T10:00:05Z ERROR psycopg_pool.PoolTimeout: couldn't get a connection after 30.00 sec (pool max_size=5)\n2025-03-01T10:00:06Z INFO request ok route=/orders id=1001 db_connections=2\n2025-03-01T10:00:07Z INFO request ok route=/orders id=4346 db_connections=2\n2025-03-01T10:00:08Z INFO request ok route=/orders id=6283 db_connections=2"
+    }
+  },
+  "family": "pool",
+  "task": {
+    "allowed_tools": [
+      "list_files",
+      "read_file",
+      "set_json_value"
+    ],
+    "context_refs": [],
+    "deadline_ms": 300000,
+    "inputs": {
+      "service": "orders-api"
+    },
+    "max_steps": 12,
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "objective": "The service intermittently fails with database connection-pool timeouts under load. Each running replica of the service has its own connection pool, and the database is shared with other services. Investigate the logs and configuration and fix this service's pool size so one replica's pool can serve that replica's concurrent demand (including every connection a request holds at once) while all replicas together stay within what the database can give this service. Files under infra/ are managed by another team and must not change; do not reduce the service's concurrency to hide the problem.",
+    "risk_level": "low",
+    "success_criteria": [
+      {
+        "capacity_keys": [
+          "db.max_size"
+        ],
+        "config_path": "app/settings.json",
+        "kind": "pool_capacity",
+        "max_capacity": 27,
+        "min_capacity": 20,
+        "role": "goal"
+      },
+      {
+        "expected": 111,
+        "key": "max_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 5,
+        "key": "reserved_connections",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 3,
+        "key": "service_replicas",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 15,
+        "key": "other_services_connections.billing",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 10,
+        "key": "other_services_connections.reports",
+        "kind": "value_unchanged",
+        "path": "infra/db.json",
+        "role": "guard"
+      },
+      {
+        "expected": 2,
+        "key": "workers",
+        "kind": "value_unchanged",
+        "path": "app/settings.json",
+        "role": "guard"
+      },
+      {
+        "expected": 5,
+        "key": "threads",
+        "kind": "value_unchanged",
+        "path": "app/settings.json",
+        "role": "guard"
+      }
+    ],
+    "task_family": "pool",
+    "task_id": "disc-pool-psycopg_shared-00",
+    "tenant_id": "bench"
+  },
+  "variant": "psycopg_shared"
+}

@@ -20,6 +20,7 @@ from experience_engine.adapters.llm.vertex import (
 )
 from experience_engine.adapters.results import JsonlResultStore
 from experience_engine.bench.dataset import (
+    DATASETS,
     DEFAULT_SEED,
     PRIVATE_SEED_ENV,
     DatasetLoader,
@@ -67,13 +68,13 @@ def _cmd_generate(args: argparse.Namespace) -> int:
             )
             return 2
         try:
-            manifest = write_private_dataset(root, int(seed_text))
+            manifest = write_private_dataset(root, int(seed_text), args.dataset)
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
         print(f"wrote private splits {manifest['dataset']} v{manifest['version']} to {root}")
         return 0
-    manifest = write_dataset(Path(args.root), args.seed)
+    manifest = write_dataset(Path(args.root), args.seed, args.dataset)
     print(f"wrote dataset {manifest['dataset']} v{manifest['version']} to {args.root}")
     return 0
 
@@ -228,6 +229,12 @@ def main(argv: list[str] | None = None) -> int:
 
     gen = sub.add_parser("generate", help="(re)generate the versioned dataset")
     gen.add_argument("--root", default="benchmarks/v1")
+    gen.add_argument(
+        "--dataset",
+        choices=sorted(DATASETS),
+        default="v1",
+        help="v1 is frozen; v2 is the harder shared-evidence benchmark (use --root benchmarks/v2)",
+    )
     gen.add_argument("--seed", type=int, default=DEFAULT_SEED)
     gen.add_argument(
         "--private",

@@ -149,3 +149,20 @@ def test_openai_adapter_retries_then_raises(server) -> None:  # type: ignore[no-
 def test_settings_never_print_key() -> None:
     s = LLMSettings(api_key=SecretStr("topsecret"), model="m")
     assert "topsecret" not in repr(s) and "topsecret" not in s.model_dump_json()
+
+
+def test_comparison_pairs_repeated_seeds_and_flags_experimental_catalogs() -> None:
+    from experience_engine.bench.report import render_comparison
+
+    def at(seed: int, ok: bool, tags: dict[str, str] | None = None):  # type: ignore[no-untyped-def]
+        rec = _records(InMemoryResultStore(), ok)[0]
+        return rec.model_copy(update={"seed": seed, "tags": {**rec.tags, **(tags or {})}})
+
+    a = [at(0, False), at(1, True), at(2, False)]
+    c = [at(0, True), at(1, True), at(2, True, {"capability_catalog": "experimental"})]
+    text = render_comparison(a, c)
+    # one task x three seeds is three paired samples, not one
+    assert "Paired runs: 3 over 1 tasks and seeds [0, 1, 2]" in text
+    assert "both succeed 1, only C 2, only A 0, neither 0" in text
+    assert "EXPERIMENTAL CATALOG" in text and "## By split and variant" in text
+    assert not compare_runs(a, a).changed and compare_runs(a, c).changed

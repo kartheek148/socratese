@@ -69,7 +69,7 @@ def good() -> dict[str, object]:
         "known_limitations": ["Derived from 3 verified successes."],
         "provenance": {
             "source_run_ids": ["r1"],
-            "compiler_version": "rule-compiler/2",
+            "compiler_version": "rule-compiler/3",
             "pipeline_version": "experience/1",
         },
     }
