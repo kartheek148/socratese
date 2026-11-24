@@ -35,6 +35,13 @@ class ArmOutcome:
     latency_ms: int
     applicable: bool | None = None
     termination: str | None = None
+    # memory / runtime arms (capability-vs-memory experiment)
+    retrieved_tokens: int = 0
+    context_tokens: int = 0
+    retrieval_ms: int = 0
+    fell_back: bool | None = None
+    capability_used: bool | None = None
+    memory_sha256: str | None = None
 
 
 ArmRunner = Callable[[BenchTask], ArmOutcome]

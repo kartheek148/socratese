@@ -25,7 +25,7 @@ uv run pytest                      # creates/drops its own database and uniquely
 docker compose -f deploy/docker-compose.yml -p ee-test down
 ```
 
-Benchmark and baseline: [docs/benchmark.md](docs/benchmark.md). Data model: [docs/schema.md](docs/schema.md). Events, outbox and messaging: [docs/events.md](docs/events.md). Capabilities, DSL and the candidate compiler (`ee-learn`): [docs/capabilities.md](docs/capabilities.md). Evaluation, promotion policy and the registry (`ee-eval`): [docs/evaluation.md](docs/evaluation.md). Runtime capability matching, composition and fallback: [docs/runtime.md](docs/runtime.md).
+Benchmark and baseline: [docs/benchmark.md](docs/benchmark.md). Data model: [docs/schema.md](docs/schema.md). Events, outbox and messaging: [docs/events.md](docs/events.md). Capabilities, DSL and the candidate compiler (`ee-learn`): [docs/capabilities.md](docs/capabilities.md). Evaluation, promotion policy and the registry (`ee-eval`): [docs/evaluation.md](docs/evaluation.md). Runtime capability matching, composition and fallback: [docs/runtime.md](docs/runtime.md). Capability-vs-memory experiment (`ee-exp`): [docs/experiments/capability-vs-memory-design.md](docs/experiments/capability-vs-memory-design.md), results in [docs/evaluations/capability-vs-memory-report.md](docs/evaluations/capability-vs-memory-report.md).
 
 ## How to use
 

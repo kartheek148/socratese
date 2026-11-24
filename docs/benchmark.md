@@ -38,6 +38,8 @@ v1 hit a ceiling (the baseline solves ~86-100%), so it cannot show a benefit fro
 
 `tests/unit/test_dataset_v2.py` proves every task is **solvable from the files alone** (a reference solver that never sees the criteria) and that each shortcut above is rejected by the independent verifier. Dev splits in `benchmarks/v2` are public and therefore burned for evaluation; real validation/hidden data come from a secret seed outside the repository, exactly as for v1. `--llm fake` knows only the v1 layouts and fails on v2 by design.
 
+**Dataset v3** (`gen/3`, `--dataset v3`) = the v2 generators (new numbers: the version is part of the RNG key) plus a hidden-only `queue` family (message-broker channel sizing: the same arithmetic as `pool` in different vocabulary, library and keys) used to test *cross-family* transfer; solvability and shortcut-failure are tested like v2.
+
 Measured on the private v2 splits (Gemini 2.5 Flash, 3 seeds): baseline **44%** validation and **28%** hidden-transfer, against 75-100% on v1 — see [evaluations/v2-benchmark-and-first-evaluations.md](./evaluations/v2-benchmark-and-first-evaluations.md).
 
 ## Verification

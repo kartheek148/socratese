@@ -23,6 +23,7 @@ from experience_engine.bench.families import (
     rng_for,
 )
 from experience_engine.bench.families_v2 import make_budget_timeout_task, make_shared_pool_task
+from experience_engine.bench.families_v3 import make_queue_task
 from experience_engine.domain.benchmark import DatasetVersion, Split
 from experience_engine.domain.task import TaskSpec
 
@@ -72,6 +73,15 @@ SPLIT_PLAN_V2: dict[Split, list[tuple[str, str, int]]] = {
         ("timeout", "okhttp_budget", 6),
     ],
 }
+# v3: v2 plus one hidden-only family for cross-family transfer (numbers differ: the version
+# string is part of the RNG key, so v3 never reuses v2 task instances)
+DATASET_VERSION_V3 = "3.0.0"
+GENERATOR_VERSION_V3 = "gen/3"
+SPLIT_PLAN_V3: dict[Split, list[tuple[str, str, int]]] = {
+    Split.DISCOVERY: SPLIT_PLAN_V2[Split.DISCOVERY],
+    Split.VALIDATION: SPLIT_PLAN_V2[Split.VALIDATION],
+    Split.HIDDEN_TRANSFER: [*SPLIT_PLAN_V2[Split.HIDDEN_TRANSFER], ("queue", "amqp_channels", 6)],
+}
 Maker = Callable[[str, str, random.Random], tuple[TaskSpec, EnvironmentSpec]]
 
 
@@ -100,6 +110,17 @@ DATASETS: dict[str, DatasetSpec] = {
         GENERATOR_VERSION_V2,
         SPLIT_PLAN_V2,
         {"pool": make_shared_pool_task, "timeout": make_budget_timeout_task},
+    ),
+    "v3": DatasetSpec(
+        "v3",
+        DATASET_VERSION_V3,
+        GENERATOR_VERSION_V3,
+        SPLIT_PLAN_V3,
+        {
+            "pool": make_shared_pool_task,
+            "timeout": make_budget_timeout_task,
+            "queue": make_queue_task,
+        },
     ),
 }
 _PREFIX = {Split.DISCOVERY: "disc", Split.VALIDATION: "val", Split.HIDDEN_TRANSFER: "hid"}

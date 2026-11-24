@@ -1,10 +1,11 @@
 """Wiring for capability-assisted execution: tool-call tracing and the runtime bundle."""
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from experience_engine import RUNTIME_VERSION
+from experience_engine.domain.capability import CapabilityDefinition
 from experience_engine.domain.trace import TraceEventType
 from experience_engine.execution.matcher import CapabilityMatcher
 from experience_engine.ports.decisions import DecisionProvider
@@ -28,6 +29,29 @@ class CapabilityRuntime:
     matcher: CapabilityMatcher
     decisions_for: Callable[[LLMClient], DecisionProvider]
     experimental: bool = False
+
+
+class StaticCapabilityCatalog:
+    """In-memory, tenant-scoped catalog over an explicit set of definitions.
+
+    For offline experiments only: the caller decides which versions are visible (so it must
+    label results as experimental unless every version is ACTIVE). Never used by production
+    wiring, which reads the registry through `SqlExecutableCatalog`.
+    """
+
+    def __init__(self, tenant_id: str, definitions: Sequence[CapabilityDefinition]):
+        self._tenant = tenant_id
+        self._defs = {(d.id, d.version): d for d in definitions}
+
+    def list_executable(self, tenant_id: str) -> list[CapabilityDefinition]:
+        if tenant_id != self._tenant:
+            return []
+        return [self._defs[k] for k in sorted(self._defs)]
+
+    def get_executable(
+        self, tenant_id: str, capability_id: str, version: int
+    ) -> CapabilityDefinition | None:
+        return self._defs.get((capability_id, version)) if tenant_id == self._tenant else None
 
 
 class TracingToolGateway:

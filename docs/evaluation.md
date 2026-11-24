@@ -89,6 +89,19 @@ What this shows, and what it does not:
 * The capability matched the baseline's correctness here at roughly **3-4x fewer tokens and latency per success** on solved tasks, but that is not promotable: correctness gates come first, and with the evaluation overhead charged the lifecycle cost per success is still higher than the baseline's (reuse over many future tasks would be needed to amortize it).
 * Single seed, 4-6 tasks per suite, wide intervals, model run-to-run variance (e.g. baseline source replay was 5/6 in one run and 3/6 in the other): these results are indicative, not statistically conclusive. No claim of improvement is made.
 
+## Capability-vs-memory experiment (`ee-exp`)
+
+`ee-exp` compares five arms on identical tasks and repetitions: **A** stateless, **B** episodic memory, **C** consolidated memory, **D** instruction reuse (the compiled procedure as natural language, executed by the general agent), **E** the compiled capability through the production runtime. B-E are built from the same eligible discovery trajectories. Design, fairness rules and statistics: [experiments/capability-vs-memory-design.md](./experiments/capability-vs-memory-design.md).
+
+```
+export EE_EVALUATOR_ROLE=evaluator EE_PRIVATE_DATASET_ROOT=/secure/path/fresh-private   # never used for any gate
+uv run ee-bench generate --dataset v3 --private --scale 2 --root /secure/path/fresh-private   # needs EE_PRIVATE_DATASET_SEED
+uv run ee-exp run --tenant bench --root benchmarks/v3-or-fresh-discovery --capabilities pool.<hash>@1 timeout.<hash>@1 \
+    --llm vertex --model gemini-2.5-flash --reps 2 --workers 8 --out results.json --report report.md
+uv run ee-exp report --results results.json --out report.md --maintenance-tokens 0
+```
+Statistics (`evaluation/paired.py`): task-level paired bootstrap CI, exact McNemar, Holm correction, equal-token-budget curves; repetitions are averaged inside a task and never counted as tasks; UNKNOWN runs are missing data. Economics (`evaluation/economics.py`): `L + N*e + M`, break-even per verified success, as-built and equal-validation sensitivity. `ee-exp` never writes to the registry. Dataset v3 adds the hidden-only `queue` family for cross-family transfer. Results: [evaluations/capability-vs-memory-report.md](./evaluations/capability-vs-memory-report.md).
+
 ## Known limitations
 
 * Evaluation uses the simulated benchmark. `--seeds` re-runs every task once per seed and `--workers` runs them concurrently; with `ee-bench generate --private --scale N` suites can be made larger (v2 results used x3 and 2 seeds). Repeats of one task are correlated, so the Wilson intervals are optimistic and the sample-size gates (`min_*_n`) count **distinct tasks**. `max_regressions` is an absolute count and gets stricter as runs grow. Real-model results still vary run to run. First multi-seed results: [evaluations/v2-multiseed-evaluation-and-production-run.md](./evaluations/v2-multiseed-evaluation-and-production-run.md).

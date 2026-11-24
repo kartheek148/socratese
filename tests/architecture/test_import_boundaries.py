@@ -25,15 +25,34 @@ FORBIDDEN = {
     "subprocess",
     "sqlite3",
 }
-PURE = ["domain", "ports", "execution", "learning", "capabilities", "bench", "evaluation"]
+PURE = [
+    "domain",
+    "ports",
+    "execution",
+    "learning",
+    "capabilities",
+    "bench",
+    "evaluation",
+    "memory",
+]
 ALLOWED_INTERNAL = {
     "domain": {"domain"},
     "ports": {"domain", "ports"},
     "execution": {"domain", "ports", "execution", "capabilities"},
     "learning": {"domain", "ports", "learning", "capabilities"},
     "capabilities": {"domain", "ports", "capabilities"},
-    "evaluation": {"domain", "ports", "capabilities", "execution", "bench", "evaluation"},
+    "evaluation": {
+        "domain",
+        "ports",
+        "capabilities",
+        "execution",
+        "bench",
+        "evaluation",
+        "memory",
+    },
     "bench": {"domain", "ports", "execution", "bench"},
+    # memory sees only trajectories/definitions: never bench, evaluation or datasets
+    "memory": {"domain", "ports", "learning", "memory"},
 }
 
 

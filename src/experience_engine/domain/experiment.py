@@ -1,0 +1,91 @@
+"""Typed records for the capability-vs-memory experiment (pure data, JSON-serialisable)."""
+
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+ARMS = ("A", "B", "C", "D", "E")
+ARM_NAMES = {
+    "A": "stateless baseline",
+    "B": "episodic memory",
+    "C": "consolidated memory",
+    "D": "instruction reuse",
+    "E": "compiled capability",
+}
+TransferLevel = Literal["source", "intra_variant", "cross_variant", "cross_family"]
+
+
+class _Frozen(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class RunRow(_Frozen):
+    """One execution of one arm on one task repetition, scored by the independent verifier."""
+
+    arm: str
+    task_id: str
+    rep: int  # repetition index: repeated draws from a non-deterministic model, not a task sample
+    split: str
+    family: str
+    variant: str
+    level: TransferLevel
+    status: str  # OutcomeStatus value; UNKNOWN is treated as missing, never as a failure
+    verified: bool
+    tokens: int  # all model tokens of the run, including retrieved memory inside the prompt
+    tool_calls: int
+    latency_ms: int
+    retrieved_tokens: int = 0
+    context_tokens: int = 0
+    retrieval_ms: int = 0
+    # arm E only
+    applicable: bool | None = None  # an eligible capability existed for this task
+    capability_used: bool | None = None
+    fell_back: bool | None = None
+    termination: str | None = None
+    memory_sha256: str | None = None  # hash of the exact retrieved text (reproducibility)
+
+
+class LearningLedger(_Frozen):
+    """Cost of producing the reusable experience, in tokens (plus wall time and tool calls)."""
+
+    discovery_tokens: int
+    discovery_tool_calls: int = 0
+    discovery_runs: int = 0
+    analysis_tokens: int = 0
+    consolidation_tokens: int = 0
+    compilation_tokens: int = 0
+    validation_tokens: int = 0
+    wall_ms_analysis: int = 0
+    wall_ms_consolidation: int = 0
+    wall_ms_compilation: int = 0
+    notes: list[str] = Field(default_factory=list)
+
+
+class ExperimentConfig(_Frozen):
+    """Everything needed to reproduce the run (no secrets, no private task contents)."""
+
+    name: str
+    model: dict[str, object]
+    arms: list[str]
+    repetitions: int
+    workers: int
+    datasets: dict[str, dict[str, str]]  # split -> name/version/content_hash
+    discovery_trajectories: int
+    discovery_families: list[str]
+    capabilities: list[str]  # id@version of every capability available to arms D and E
+    capability_catalog_states: list[str]
+    memory_preamble_sha256: str
+    max_episodes: int
+    verifier_version: str
+    runtime_version: str
+    evaluator_version: str
+    token_estimator: str = "chars/4"
+    notes: list[str] = Field(default_factory=list)
+
+
+class ExperimentResult(_Frozen):
+    config: ExperimentConfig
+    ledger: LearningLedger
+    ledger_by_family: dict[str, LearningLedger] = Field(default_factory=dict)
+    rows: list[RunRow]
+    applicability: list[dict[str, object]] = Field(default_factory=list)
