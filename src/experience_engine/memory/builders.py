@@ -25,6 +25,7 @@ from experience_engine.domain.capability import (
     Verify,
 )
 from experience_engine.domain.experience import Trajectory
+from experience_engine.domain.memory import EpisodeEntry
 from experience_engine.domain.outcome import OutcomeStatus
 from experience_engine.learning.contrast import contrast
 
@@ -70,6 +71,11 @@ def render_episode(t: Trajectory, number: int) -> str:
         f"Episode {number} (task family {family}): {verdict}. "
         f"Steps: {_steps(t)}. Cost: {t.tokens_used} tokens, {t.tool_calls} tool calls."
     )
+
+
+def render_episode_entry(e: EpisodeEntry, number: int) -> str:
+    """Render one stored bank entry exactly as `render_episode` rendered the live trajectory."""
+    return e.text.replace("Episode 0 ", f"Episode {number} ", 1)
 
 
 def build_episodic(episodes: Sequence[Trajectory]) -> str:

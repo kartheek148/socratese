@@ -9,6 +9,7 @@ touch other databases or queues on the same servers.
 """
 
 import os
+import sys
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,6 +24,8 @@ from sqlalchemy.engine import make_url
 from experience_engine.adapters.db.engine import InfraSettings, make_engine
 
 ROOT = Path(__file__).resolve().parents[1]
+# integration tests reuse builders from unit-test modules (basenames are unique across tests/)
+sys.path.insert(0, str(Path(__file__).parent / "unit"))
 
 
 def alembic_config(url: str) -> Config:
@@ -91,7 +94,9 @@ def engine(database_url: str) -> Iterator[Engine]:
                 "policy_decisions, outbox_events, consumed_events, learning_jobs, "
                 "dead_letters, audit_log, experience_cases, capabilities, capability_versions, "
                 "capability_evidence, cost_ledger, capability_evaluations, capability_transitions, "
-                "capability_pointers, rollout_observations CASCADE"
+                "capability_pointers, rollout_observations, memories, memory_versions, "
+                "memory_evaluations, memory_transitions, memory_pointers, "
+                "memory_observations CASCADE"
             )
         )
     yield eng

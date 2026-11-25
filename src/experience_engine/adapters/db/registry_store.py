@@ -5,6 +5,7 @@ from sqlalchemy import Engine
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from experience_engine.adapters.db import tables as t
+from experience_engine.adapters.db.asset_spec import AssetSpec, capability_spec
 from experience_engine.adapters.db.run_lifecycle import write_audit
 from experience_engine.domain.capability import CapabilityDefinition, CapabilityState
 from experience_engine.domain.evaluation import EvaluationReport, Suite, Verdict
@@ -19,38 +20,39 @@ from experience_engine.ports.registry import (
     VersionRecord,
 )
 
-cv = t.capability_versions
 
+class SqlAssetRegistryStore[D]:
+    """Registry persistence for one asset kind (see `AssetSpec`). Capability behaviour is the
+    pre-M5.8 behaviour; memory uses the same code over its own tables."""
 
-class SqlRegistryStore:
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, spec: AssetSpec[D]):
         self._engine = engine
+        self._spec = spec
 
-    def get_version(self, tenant_id: str, capability_id: str, version: int) -> VersionRecord | None:
+    def get_version(
+        self, tenant_id: str, capability_id: str, version: int
+    ) -> VersionRecord[D] | None:
+        cv, idc = self._spec.versions, self._spec.id_col
         with self._engine.connect() as conn:
             row = conn.execute(
                 sa.select(cv.c.definition, cv.c.state).where(
                     cv.c.tenant_id == tenant_id,
-                    cv.c.capability_id == capability_id,
+                    cv.c[idc] == capability_id,
                     cv.c.version == version,
                 )
             ).first()
         if row is None:
             return None
         return VersionRecord(
-            tenant_id,
-            capability_id,
-            version,
-            CapabilityState(row[1]),
-            CapabilityDefinition.model_validate(row[0]),
+            tenant_id, capability_id, version, CapabilityState(row[1]), self._spec.decode(row[0])
         )
 
     def get_pointer(self, tenant_id: str, capability_id: str) -> Pointer:
-        p = t.capability_pointers
+        p, idc = self._spec.pointers, self._spec.id_col
         with self._engine.connect() as conn:
             row = conn.execute(
                 sa.select(p.c.active_version, p.c.previous_version).where(
-                    p.c.tenant_id == tenant_id, p.c.capability_id == capability_id
+                    p.c.tenant_id == tenant_id, p.c[idc] == capability_id
                 )
             ).first()
         return Pointer(row[0], row[1]) if row else Pointer()
@@ -70,24 +72,24 @@ class SqlRegistryStore:
     ) -> None:
         # Leave ACTIVE before entering ACTIVE so the one-active-per-capability index holds.
         ordered = sorted(transitions, key=lambda tr: tr.to_state == CapabilityState.ACTIVE)
-        p = t.capability_pointers
+        sp = self._spec
+        cv, p, idc = sp.versions, sp.pointers, sp.id_col
         with self._engine.begin() as conn:
             known = conn.execute(
-                sa.select(t.capabilities.c.capability_id).where(
-                    t.capabilities.c.tenant_id == tenant_id,
-                    t.capabilities.c.capability_id == capability_id,
+                sa.select(sp.identity.c[idc]).where(
+                    sp.identity.c.tenant_id == tenant_id, sp.identity.c[idc] == capability_id
                 )
             ).scalar_one_or_none()
             if known is None:
-                raise StaleStateError(f"capability {capability_id} not found for this tenant")
+                raise StaleStateError(f"asset {capability_id} not found for this tenant")
             conn.execute(
                 pg_insert(p)
-                .values(tenant_id=tenant_id, capability_id=capability_id, updated_at=now)
-                .on_conflict_do_nothing(index_elements=["tenant_id", "capability_id"])
+                .values(**{"tenant_id": tenant_id, idc: capability_id, "updated_at": now})
+                .on_conflict_do_nothing(index_elements=["tenant_id", idc])
             )
-            conn.execute(  # serialize concurrent lifecycle changes of one capability
-                sa.select(p.c.capability_id)
-                .where(p.c.tenant_id == tenant_id, p.c.capability_id == capability_id)
+            conn.execute(  # serialize concurrent lifecycle changes of one asset
+                sa.select(p.c[idc])
+                .where(p.c.tenant_id == tenant_id, p.c[idc] == capability_id)
                 .with_for_update()
             )
             for tr in ordered:
@@ -95,7 +97,7 @@ class SqlRegistryStore:
                     sa.select(cv.c.state)
                     .where(
                         cv.c.tenant_id == tenant_id,
-                        cv.c.capability_id == capability_id,
+                        cv.c[idc] == capability_id,
                         cv.c.version == tr.version,
                     )
                     .with_for_update()
@@ -109,16 +111,16 @@ class SqlRegistryStore:
                     cv.update()
                     .where(
                         cv.c.tenant_id == tenant_id,
-                        cv.c.capability_id == capability_id,
+                        cv.c[idc] == capability_id,
                         cv.c.version == tr.version,
                     )
                     .values(state=tr.to_state.value)
                 )
                 conn.execute(
-                    t.capability_transitions.insert().values(
+                    sp.transitions.insert().values(
+                        **{idc: capability_id},
                         transition_id=new_id(),
                         tenant_id=tenant_id,
-                        capability_id=capability_id,
                         version=tr.version,
                         from_state=tr.expected_from.value,
                         to_state=tr.to_state.value,
@@ -132,8 +134,8 @@ class SqlRegistryStore:
                 write_audit(
                     conn,
                     tenant_id=tenant_id,
-                    action="capability.transition",
-                    entity_type="capability_version",
+                    action=sp.audit_action,
+                    entity_type=sp.entity_type,
                     entity_id=f"{capability_id}@{tr.version}",
                     correlation_id=capability_id,
                     ts=now,
@@ -148,7 +150,7 @@ class SqlRegistryStore:
             if pointer is not None:
                 conn.execute(
                     p.update()
-                    .where(p.c.tenant_id == tenant_id, p.c.capability_id == capability_id)
+                    .where(p.c.tenant_id == tenant_id, p.c[idc] == capability_id)
                     .values(
                         active_version=pointer.active_version,
                         previous_version=pointer.previous_version,
@@ -175,13 +177,13 @@ class SqlRegistryStore:
 
     def record_evaluation(self, report: EvaluationReport, report_sha256: str, now: datetime) -> str:
         evaluation_id = new_id()
-        reg = report.suites.get(Suite.REGRESSION.value, {}).get("C_CAPABILITY")
+        reg = report.suites.get(Suite.REGRESSION.value, {}).get(report.treatment_arm)
         with self._engine.begin() as conn:
             conn.execute(
-                t.capability_evaluations.insert().values(
+                self._spec.evaluations.insert().values(
+                    **{self._spec.id_col: report.capability_id},
                     evaluation_id=evaluation_id,
                     tenant_id=report.tenant_id,
-                    capability_id=report.capability_id,
                     version=report.version,
                     verdict=report.verdict.value,
                     risk_class=report.risk_class,
@@ -222,13 +224,13 @@ class SqlRegistryStore:
     def latest_evaluation(
         self, tenant_id: str, capability_id: str, version: int
     ) -> EvaluationSummary | None:
-        e = t.capability_evaluations
+        e, idc = self._spec.evaluations, self._spec.id_col
         with self._engine.connect() as conn:
             row = conn.execute(
                 sa.select(e.c.evaluation_id, e.c.verdict, e.c.policy_hash, e.c.risk_class)
                 .where(
                     e.c.tenant_id == tenant_id,
-                    e.c.capability_id == capability_id,
+                    e.c[idc] == capability_id,
                     e.c.version == version,
                 )
                 .order_by(e.c.completed_at.desc(), e.c.evaluation_id.desc())
@@ -253,17 +255,20 @@ class SqlRegistryStore:
         now: datetime,
     ) -> None:
         with self._engine.begin() as conn:
+            sp = self._spec
             conn.execute(
-                t.rollout_observations.insert().values(
+                sp.observations.insert().values(
+                    **{
+                        sp.id_col: capability_id,
+                        sp.verified_col: capability_verified,
+                        sp.tokens_col: capability_tokens,
+                    },
                     observation_id=new_id(),
                     tenant_id=tenant_id,
-                    capability_id=capability_id,
                     version=version,
                     mode=mode,
                     task_id=task_id,
-                    capability_verified=capability_verified,
                     baseline_verified=baseline_verified,
-                    capability_tokens=capability_tokens,
                     baseline_tokens=baseline_tokens,
                     created_at=now,
                 )
@@ -272,21 +277,30 @@ class SqlRegistryStore:
     def observation_stats(
         self, tenant_id: str, capability_id: str, version: int, mode: str
     ) -> ObservationStats:
-        o = t.rollout_observations
+        o, idc, vcol = self._spec.observations, self._spec.id_col, self._spec.verified_col
         with self._engine.connect() as conn:
             row = conn.execute(
                 sa.select(
                     sa.func.count(),
-                    sa.func.count().filter(o.c.capability_verified.is_(True)),
+                    sa.func.count().filter(o.c[vcol].is_(True)),
                     sa.func.count().filter(o.c.baseline_verified.is_not(None)),
                     sa.func.count().filter(
-                        sa.and_(o.c.baseline_verified.is_(True), o.c.capability_verified.is_(False))
+                        sa.and_(o.c.baseline_verified.is_(True), o.c[vcol].is_(False))
                     ),
                 ).where(
                     o.c.tenant_id == tenant_id,
-                    o.c.capability_id == capability_id,
+                    o.c[idc] == capability_id,
                     o.c.version == version,
                     o.c.mode == mode,
                 )
             ).one()
         return ObservationStats(int(row[0]), int(row[1]), int(row[2]), int(row[3]))
+
+
+class SqlRegistryStore(SqlAssetRegistryStore[CapabilityDefinition]):
+    """Capability registry persistence (unchanged behaviour)."""
+
+    def __init__(self, engine: Engine):
+        super().__init__(
+            engine, capability_spec(lambda raw: CapabilityDefinition.model_validate(raw))
+        )

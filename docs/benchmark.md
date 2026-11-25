@@ -40,6 +40,8 @@ v1 hit a ceiling (the baseline solves ~86-100%), so it cannot show a benefit fro
 
 **Dataset v3** (`gen/3`, `--dataset v3`) = the v2 generators (new numbers: the version is part of the RNG key) plus a hidden-only `queue` family (message-broker channel sizing: the same arithmetic as `pool` in different vocabulary, library and keys) used to test *cross-family* transfer; solvability and shortcut-failure are tested like v2.
 
+M5.8 used v3 with a public discovery seed, a private validation seed (`--scale 3`) and a different private comparison seed (`--scale 5`: 60 pool, 60 timeout and 30 queue tasks); the private seeds were never recorded. See [evaluations/gated-memory-vs-capability-report.md](./evaluations/gated-memory-vs-capability-report.md).
+
 Measured on the private v2 splits (Gemini 2.5 Flash, 3 seeds): baseline **44%** validation and **28%** hidden-transfer, against 75-100% on v1 — see [evaluations/v2-benchmark-and-first-evaluations.md](./evaluations/v2-benchmark-and-first-evaluations.md).
 
 ## Verification

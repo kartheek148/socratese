@@ -3,7 +3,9 @@ control), C compiled capability. All arms run in a fresh simulated environment a
 the same independent verifier from final environment state, never from their own claims.
 """
 
+import threading
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from experience_engine.bench.dataset import BenchTask
@@ -42,9 +44,44 @@ class ArmOutcome:
     fell_back: bool | None = None
     capability_used: bool | None = None
     memory_sha256: str | None = None
+    asset_kind: str | None = None
+    asset_ref: str | None = None
+    asset_family: str | None = None
+    fallback_reason: str | None = None
 
 
 ArmRunner = Callable[[BenchTask], ArmOutcome]
+
+# The repetition (seed) currently being executed. The engine sets it around every runner call so
+# wrappers such as `SharedArm` can tell repetitions of one task apart without changing ArmRunner.
+CURRENT_SEED: ContextVar[int] = ContextVar("evaluation_seed", default=0)
+
+
+class SharedArm:
+    """Computes each (task, repetition) once and serves it to every evaluation that asks.
+
+    Used for the control arm when several assets are evaluated in one session: they are then
+    compared against the *same* baseline draws (paired), at the cost of one baseline run.
+    """
+
+    def __init__(self, inner: ArmRunner):
+        self._inner = inner
+        self._guard = threading.Lock()
+        self._locks: dict[tuple[str, int], threading.Lock] = {}
+        self._done: dict[tuple[str, int], ArmOutcome] = {}
+        self.computed = 0
+        self.served = 0
+
+    def __call__(self, bench: BenchTask) -> ArmOutcome:
+        key = (bench.task.task_id, CURRENT_SEED.get())
+        with self._guard:
+            lock = self._locks.setdefault(key, threading.Lock())
+        with lock:
+            if key not in self._done:
+                self._done[key] = self._inner(bench)
+                self.computed += 1
+            self.served += 1
+            return self._done[key]
 
 
 class HintedLLM:

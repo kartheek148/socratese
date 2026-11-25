@@ -10,8 +10,11 @@ from typing import Any
 
 from experience_engine.bench.dataset import BenchTask
 from experience_engine.bench.environment import SimulatedEnvironment
+from experience_engine.capabilities.applicability import EnvironmentFacts
 from experience_engine.capabilities.tools import classify_path
 from experience_engine.domain.benchmark import AgentConfig
+from experience_engine.domain.capability import TaskFamilyIs
+from experience_engine.domain.memory import MemoryType
 from experience_engine.domain.outcome import OutcomeStatus
 from experience_engine.evaluation.arms import ArmOutcome, ArmRunner
 from experience_engine.execution.capability_runtime import CapabilityRuntime
@@ -19,8 +22,10 @@ from experience_engine.execution.controller import FixedPolicy, RuleCapabilityPo
 from experience_engine.execution.orchestrator import RunResult, TaskOrchestrator
 from experience_engine.memory.bank import Retrieved, TaskQuery
 from experience_engine.memory.inject import MemoryAugmentedLLM
+from experience_engine.memory.runtime import select_memory
 from experience_engine.ports.clock import Clock
 from experience_engine.ports.llm import LLMClient
+from experience_engine.ports.memory import ActiveMemoryCatalog
 from experience_engine.ports.verifier import OutcomeVerifier
 
 
@@ -88,6 +93,62 @@ def make_baseline_arm(
     )
 
 
+def facts_for(bench: BenchTask) -> EnvironmentFacts:
+    session = SimulatedEnvironment(bench.environment, bench.task.allowed_tools)
+    roles = {classify_path(p) for p in session.snapshot()}
+    t = bench.task
+    return EnvironmentFacts.of(t.task_family, t.allowed_tools, t.risk_level, roles)
+
+
+def make_gated_memory_arm(
+    *,
+    llm: LLMClient,
+    config: AgentConfig,
+    verifier: OutcomeVerifier,
+    clock: Clock,
+    catalog: ActiveMemoryCatalog,
+    tenant_id: str,
+    memory_type: MemoryType,
+) -> ArmRunner:
+    """Production-mode memory: only ACTIVE versions of `memory_type`, applicability-checked. If no
+    applicable ACTIVE asset exists the task runs under general planning and the reason is recorded.
+    """
+    orchestrator = TaskOrchestrator(
+        controller=FixedPolicy(), verifier=verifier, clock=clock, config=config
+    )
+
+    def run(bench: BenchTask) -> ArmOutcome:
+        sel = select_memory(catalog, tenant_id, memory_type, facts_for(bench))
+        client = MemoryAugmentedLLM(llm, sel.text)
+        session = SimulatedEnvironment(bench.environment, bench.task.allowed_tools)
+        result = orchestrator.execute(bench.task, session, client)
+        a = sel.artifact
+        return _outcome(
+            result,
+            applicable=a is not None,
+            retrieved_tokens=sel.retrieved_tokens,
+            context_tokens=client.first_prompt_tokens,
+            retrieval_ms=sel.retrieval_ms,
+            memory_sha256=hashlib.sha256(sel.text.encode()).hexdigest() if sel.text else None,
+            asset_kind="MEMORY" if a else None,
+            asset_ref=sel.ref,
+            asset_family=a.task_family if a else None,
+            fallback_reason=sel.fallback_reason,
+        )
+
+    return run
+
+
+def family_of_ref(runtime: CapabilityRuntime, tenant_id: str, ref: str | None) -> str | None:
+    if ref is None:
+        return None
+    cid, _, ver = ref.partition("@")
+    for d in runtime.catalog.list_executable(tenant_id):
+        if d.id == cid and str(d.version) == ver:
+            return next((p.family for p in d.preconditions if isinstance(p, TaskFamilyIs)), None)
+    return None
+
+
 def make_runtime_arm(
     *,
     llm: LLMClient,
@@ -95,6 +156,7 @@ def make_runtime_arm(
     verifier: OutcomeVerifier,
     clock: Clock,
     runtime: CapabilityRuntime,
+    tenant_id: str = "bench",
 ) -> ArmRunner:
     """Arm E: production path (matcher -> controller -> executor -> fallback to planning)."""
     orchestrator = TaskOrchestrator(
@@ -109,11 +171,20 @@ def make_runtime_arm(
         session = SimulatedEnvironment(bench.environment, bench.task.allowed_tools)
         result = orchestrator.execute(bench.task, session, llm)
         eligible = result.decision.feature_snapshot.get("n_eligible_capabilities", 0)
+        ref = result.outcome.capability_version
+        n_catalog = result.decision.feature_snapshot.get("n_catalog", 0)
+        reason = result.runtime.fallback_reason
+        if ref is None:
+            reason = f"no eligible ACTIVE capability (catalog size {n_catalog})"
         return _outcome(
             result,
             applicable=bool(eligible),
-            capability_used=result.outcome.capability_version is not None,
+            capability_used=ref is not None,
             fell_back=bool(result.runtime.fallback_reason),
+            asset_kind="CAPABILITY" if ref else None,
+            asset_ref=ref,
+            asset_family=family_of_ref(runtime, tenant_id, ref),
+            fallback_reason=reason,
         )
 
     return run

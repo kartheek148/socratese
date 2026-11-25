@@ -148,3 +148,58 @@ def test_cli_refuses_without_evaluator_access_and_without_private_data(
         main(args)
     monkeypatch.setenv("EE_EVALUATOR_ROLE", "evaluator")
     assert main(args) == 2  # no fresh private data supplied
+
+
+def test_gated_cli_reads_only_active_assets_and_records_the_exact_version_or_the_reason(
+    env: Env,
+    private_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from test_memory_governance import built
+    from test_memory_governance_e2e import evaluate as evaluate_memory
+    from test_memory_governance_e2e import promote as promote_memory
+
+    from experience_engine.adapters.db.memory_registry_store import SqlMemoryRegistryStore
+    from experience_engine.adapters.db.memory_store import SqlMemoryStore
+    from experience_engine.domain.evaluation import Verdict, default_policies
+    from experience_engine.governance.memory import MemoryRegistryService
+    from experience_engine.memory.service import register_candidates
+    from support import FakeClock
+
+    learned(env)
+    trajs = load_discovery_experience(SqlExperienceStore(env.engine), env.artifacts, TENANT)
+    register_candidates(SqlMemoryStore(env.engine), built(trajs))
+    svc = MemoryRegistryService(SqlMemoryRegistryStore(env.engine), default_policies(), FakeClock())
+    # ACTIVE: episodic/pool; REJECTED: consolidated/pool; CANDIDATE: everything else
+    evaluate_memory(svc, Verdict.PASS, mid="mem_episodic_pool")
+    promote_memory(svc, env.engine, mid="mem_episodic_pool")
+    evaluate_memory(svc, Verdict.FAIL, mid="mem_consolidated_pool")
+
+    monkeypatch.setenv("EE_EVALUATOR_ROLE", "evaluator")
+    monkeypatch.setenv("EE_DATABASE_URL", env.engine.url.render_as_string(hide_password=False))
+    monkeypatch.setenv("EE_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    out, report = tmp_path / "gated.json", tmp_path / "gated.md"
+    rc = main(
+        [
+            "run", "--mode", "gated", "--tenant", TENANT, "--root", str(COMMITTED),
+            "--private-root", str(private_root), "--llm", "fake", "--reps", "1",
+            "--workers", "4", "--max-tasks", "6", "--name", "gated-plumbing",
+            "--out", str(out), "--report", str(report),
+        ]
+    )  # fmt: skip
+    assert rc == 0, capsys.readouterr().err
+    result = ExperimentResult.model_validate_json(out.read_text())
+    assert result.config.mode == "gated" and result.config.asset_states == ["ACTIVE"]
+    assert result.config.memory_assets == ["mem_episodic_pool@1"]
+    assert set(result.config.arms) == set("ABCDEF")
+    used = {(r.arm, r.asset_ref) for r in result.rows if r.asset_ref}
+    assert used <= {("B", "mem_episodic_pool@1")}  # nothing CANDIDATE/REJECTED was ever served
+    for r in result.rows:
+        if r.arm in "CDF" or (r.arm == "B" and r.family != "pool"):
+            assert r.asset_ref is None and r.fallback_reason and r.retrieved_tokens == 0
+        if r.arm == "B" and r.family == "pool":
+            assert r.asset_ref == "mem_episodic_pool@1" and r.asset_family == "pool"
+    assert any(r.arm == "B" and r.asset_ref for r in result.rows)
+    assert "6b. Asset usage" in report.read_text()

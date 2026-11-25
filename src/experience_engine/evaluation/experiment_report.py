@@ -6,7 +6,14 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
 
 from experience_engine.bench.report import assert_no_secrets
-from experience_engine.domain.experiment import ARM_NAMES, ARMS, ExperimentResult, RunRow
+from experience_engine.domain.experiment import (
+    ARM_NAMES,
+    ARM_NAMES_GATED,
+    ARMS,
+    ExperimentResult,
+    LearningLedger,
+    RunRow,
+)
 from experience_engine.evaluation import paired
 from experience_engine.evaluation.economics import ArmEconomics, lifecycle_table
 
@@ -22,8 +29,8 @@ def _arms(result: ExperimentResult) -> list[str]:
     return [a for a in ARMS if a in result.config.arms]
 
 
-def _label(a: str) -> str:
-    return f"{a} {ARM_NAMES[a]}"
+def _label(a: str, mode: str = "legacy") -> str:
+    return f"{a} {(ARM_NAMES_GATED if mode == 'gated' else ARM_NAMES)[a]}"
 
 
 def _group_table(
@@ -90,7 +97,7 @@ def _comparisons(
     return [*_CMP_HEADER, *[_cmp_row(c, adj[f"{c.x}-{c.y}"]) for c in comps]]
 
 
-def _econ_table(table: dict[str, ArmEconomics]) -> list[str]:
+def _econ_table(table: dict[str, ArmEconomics], mode: str = "legacy") -> list[str]:
     out = [
         "| Arm | runs | success | tokens/run | tokens/success | tool calls/run | latency s/run | "
         "retrieved tok/run | retrieval ms | learning tokens L | break-even (verified successes) |",
@@ -105,12 +112,132 @@ def _econ_table(table: dict[str, ArmEconomics]) -> list[str]:
         else:
             be = f"{e.breakeven_successes:,.0f}"
         out.append(
-            f"| {_label(a)} | {e.n_runs} | {_pct(e.success_rate)} | {e.tokens_per_run:,.0f} | {c} "
+            f"| {_label(a, mode)} | {e.n_runs} | {_pct(e.success_rate)} | "
+            f"{e.tokens_per_run:,.0f} | {c} "
             f"| {e.tool_calls_per_run:.1f} | {e.latency_ms_per_run / 1000:.0f} | "
             f"{e.retrieved_tokens_per_run:,.0f} | {e.retrieval_ms_per_run:.1f} | "
             f"{e.learning_tokens:,} | {be} |"
         )
     return out
+
+
+def _sensitivity(
+    known: Sequence[RunRow], lg: LearningLedger, arms: Sequence[str], maintenance_tokens: int
+) -> list[str]:
+    """Maintenance and reuse volume are ASSUMPTIONS explored here, never measurements."""
+    out = [
+        "",
+        "### 5.4 Sensitivity to maintenance (assumed re-validations) and to reuse volume",
+        "",
+        "Maintenance is **not measured**. Each row assumes the arm's own validation is repeated "
+        "R times over the asset's life (e.g. after drift). Break-even is in verified successes "
+        "vs the stateless baseline; `tokens per verified success` is the all-in lifecycle cost "
+        "(learning + maintenance + execution) per success after N future tasks.",
+        "",
+        "| Arm | break-even, R=0 | R=1 | R=3 | all-in tokens/success at N=100 | N=1,000 | "
+        "N=10,000 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    tables = {
+        r: lifecycle_table(
+            known, lg, arms=arms, maintenance_tokens=maintenance_tokens, revalidations=r
+        )
+        for r in (0, 1, 3)
+    }
+    for a in arms:
+        if a in ("A", "F"):
+            continue
+
+        def be(r: int, a: str = a) -> str:
+            v = tables[r][a].breakeven_successes
+            return "never" if v is None else f"{v:,.0f}"
+
+        e = tables[1][a]
+        cells = []
+        for n in (100, 1000, 10000):
+            verified = n * e.success_rate
+            cells.append(f"{e.lifecycle_cost(n) / verified:,.0f}" if verified else "never")
+        out.append(f"| {a} | {be(0)} | {be(1)} | {be(3)} | " + " | ".join(cells) + " |")
+    out.append("")
+    out.append(
+        "(The N columns assume R=1 and the measured success rate and tokens per task; the "
+        "stateless baseline's all-in cost per success is its execution cost per success.)"
+    )
+    return out
+
+
+def _usage(known: Sequence[RunRow], arms: Sequence[str], mode: str) -> list[str]:
+    """Gated mode: which governed asset served each task, and why none did."""
+    lines = [
+        "",
+        "## 6b. Asset usage, fallback and false application (gated mode)",
+        "",
+        "Every run records the exact asset version used (`asset_ref`) or the reason general "
+        "planning ran instead. *False application* = an asset applied to a task outside the "
+        "family it declares.",
+        "",
+        "| Arm | family | tasks | asset applied | fell back to planning | false application | "
+        "top fallback reasons |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for a in arms:
+        if a in ("A",) or a.startswith("U"):
+            continue
+        for fam in sorted({r.family for r in known if r.arm == a}):
+            sub = [r for r in known if r.arm == a and r.family == fam]
+            n = len(sub)
+            applied = [r for r in sub if r.asset_ref]
+            wrong = [r for r in applied if r.asset_family and r.asset_family != fam]
+            reasons = Counter((r.fallback_reason or "")[:70] for r in sub if not r.asset_ref)
+            top = "; ".join(f"{k} (x{v})" for k, v in reasons.most_common(2)) or "-"
+            lines.append(
+                f"| {_label(a, mode)} | {fam} | {len({r.task_id for r in sub})} | "
+                f"{len(applied)}/{n} | {n - len(applied)}/{n} | {len(wrong)}/{n} | {top} |"
+            )
+    refs = Counter((r.arm, r.asset_ref) for r in known if r.asset_ref)
+    if refs:
+        lines += [
+            "",
+            "Exact asset versions used (arm, version): "
+            + ", ".join(f"{a}:{ref} x{n}" for (a, ref), n in sorted(refs.items())),
+        ]
+    return lines
+
+
+def _negative_transfer(known: Sequence[RunRow], arms: Sequence[str]) -> list[str]:
+    """Gated vs ungated memory on the families where ungated memory was also run."""
+    pairs = [(g, u) for g, u in (("B", "UB"), ("C", "UC"), ("D", "UD")) if g in arms and u in arms]
+    if not pairs:
+        return []
+    fams = sorted({r.family for r in known if r.arm in ("UB", "UC", "UD")})
+    lines = [
+        "",
+        "## 7b. Negative transfer: what gating prevents",
+        "",
+        f"On families `{fams}` (never seen in discovery) the ungated memory arms (UB/UC/UD: "
+        "always inject, nearest experience when the family is unknown) were run beside the gated "
+        "ones. Paired on identical tasks:",
+        "",
+    ]
+    for fam in fams:
+        sub = [r for r in known if r.family == fam]
+        lines += [f"Family `{fam}`:", ""]
+        comps = [("A", "UB"), ("A", "UC"), ("A", "UD"), ("B", "UB"), ("C", "UC"), ("D", "UD")]
+        comps = [(x, y) for x, y in comps if x in arms and y in arms]
+        lines += [*_comparisons(sub, comps), ""]
+        rates = {a: paired.task_rates(sub, a) for a in ("A", "UB", "UC", "UD")}
+        mean = {a: (sum(v.values()) / len(v) if v else None) for a, v in rates.items()}
+        base = mean["A"]
+        if base is not None:
+            for u in ("UB", "UC", "UD"):
+                m = mean[u]
+                if m is not None:
+                    lines.append(
+                        f"- {u}: {m - base:+.0%} vs the stateless baseline "
+                        f"({_pct(m)} vs {_pct(base)}); gating removes this effect by "
+                        "construction (no asset applies, so the run equals planning)."
+                    )
+    return lines
 
 
 def render_experiment(result: ExperimentResult, *, title: str, maintenance_tokens: int = 0) -> str:
@@ -121,6 +248,17 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
     lines: list[str] = [
         f"# {title}",
         "",
+        *(
+            [
+                "**Gated mode.** Arms B-E read only ACTIVE governed assets (memory and "
+                "capabilities were validated and promoted by the same policy); a task without an "
+                "applicable ACTIVE asset runs under general planning with a recorded reason. F is "
+                "the noise control: the same path with an empty registry.",
+                "",
+            ]
+            if cfg.mode == "gated"
+            else []
+        ),
         "Research question: with equivalent historical experience, does a compiled, validated, "
         "executable capability (E) outperform memory-based reuse (B episodic, C consolidated, "
         "D instructions) and the stateless baseline (A)? The design is "
@@ -133,7 +271,7 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
         f"{cfg.model.get('temperature')}); repetitions per task: {cfg.repetitions}; workers: "
         f"{cfg.workers}. Repetitions are repeated draws from a non-deterministic model (the "
         "provider ignores seeds), not independent samples.",
-        f"- Arms: {', '.join(_label(a) for a in arms)}.",
+        f"- Arms: {', '.join(_label(a, cfg.mode) for a in arms)}.",
         "- Datasets: "
         + "; ".join(
             f"{s}: `{v['name']}` v{v['version']} `{v['content_hash'][:12]}…`"
@@ -142,7 +280,13 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
         f"- Discovery experience: {cfg.discovery_trajectories} eligible trajectories "
         f"(DISCOVERY split only), families {cfg.discovery_families}; the same set feeds B, C, D "
         "and the compiler.",
-        f"- Capabilities available to D and E: {', '.join(cfg.capabilities) or 'none'} "
+        *(
+            [f"- ACTIVE memory assets: {', '.join(cfg.memory_assets) or 'none'}."]
+            if cfg.mode == "gated"
+            else []
+        ),
+        f"- Capabilities available to E (and rendered for D in legacy mode): "
+        f"{', '.join(cfg.capabilities) or 'none'} "
         f"(catalog states {cfg.capability_catalog_states}). "
         + (
             "**Experimental catalog: not every version is ACTIVE; this is a research run, "
@@ -236,12 +380,19 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
         ]
 
     # efficiency and equal-budget success
+    econ_arms = [a for a in arms if not a.startswith("U")]  # ungated arms run on a subset only
     econ = lifecycle_table(known, result.ledger, arms=arms, maintenance_tokens=maintenance_tokens)
     lines += [
         "",
         "## 4. Execution efficiency and equal-budget success",
         "",
-        "Tokens include the retrieved memory, which sits inside every prompt of the run.",
+        "Tokens include the retrieved memory, which sits inside every prompt of the run."
+        + (
+            f" Ungated arms (U*) ran only on families {cfg.ungated_families}; their rows are not "
+            "comparable with all-family averages (see section 7b)."
+            if cfg.ungated_families
+            else ""
+        ),
         "",
         "| Arm | context tokens (est., first call) | retrieved tokens | tokens/run | "
         "tokens/verified success |",
@@ -253,7 +404,7 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
         e = econ[a]
         per_success = "never" if e.tokens_per_success is None else f"{e.tokens_per_success:,.0f}"
         lines.append(
-            f"| {_label(a)} | {_ctx(rs, n)} | "
+            f"| {_label(a, cfg.mode)} | {_ctx(rs, n)} | "
             f"{sum(r.retrieved_tokens for r in rs) / n:,.0f} | {e.tokens_per_run:,.0f} | "
             f"{per_success} |"
         )
@@ -267,7 +418,9 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
     ]
     for a in arms:
         curve = paired.budget_curve(known, a, BUDGET_CAPS)
-        lines.append(f"| {_label(a)} | " + " | ".join(_pct(curve[c]) for c in BUDGET_CAPS) + " |")
+        lines.append(
+            f"| {_label(a, cfg.mode)} | " + " | ".join(_pct(curve[c]) for c in BUDGET_CAPS) + " |"
+        )
 
     # lifecycle
     lg = result.ledger
@@ -288,22 +441,48 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
         f"{lg.validation_tokens:,}.",
         *[f"- {n}" for n in lg.notes],
         "",
-        "### 5.1 As built (only the capability pays for validation)",
+        "### 5.1 As built ("
+        + (
+            "each arm pays the recorded validation of its own asset type, rejected assets included)"
+            if lg.validation_by_arm
+            else "only the capability pays for validation)"
+        ),
         "",
-        *_econ_table(econ),
+        *_econ_table(econ, cfg.mode),
         "",
-        "### 5.2 Sensitivity: every learning arm pays the same validation cost",
+        "### 5.2 "
+        + (
+            "Equal governance: every learning arm pays the same mean validation cost"
+            if lg.validation_by_arm
+            else "Sensitivity: every learning arm pays the same validation cost"
+        ),
         "",
         *_econ_table(
             lifecycle_table(
                 known,
                 lg,
-                arms=arms,
+                arms=econ_arms,
                 maintenance_tokens=maintenance_tokens,
                 charge_validation_to_all=True,
-            )
+            ),
+            cfg.mode,
         ),
     ]
+    if cfg.mode == "gated":
+        idle = [
+            a
+            for a in econ_arms
+            if a not in ("A", "F")
+            and not any(r.asset_ref or r.capability_used for r in known if r.arm == a)
+        ]
+        if idle:
+            lines += [
+                "",
+                f"**Arms {', '.join(idle)} applied no asset on any run** (nothing of their type "
+                "reached ACTIVE), so they executed exactly like F. Their economics below price "
+                "learning that was never used, and their differences from A measure run-to-run "
+                "noise, not memory.",
+            ]
     for fam in sorted({r.family for r in known}):
         fl = result.ledger_by_family.get(fam)
         if fl is None:
@@ -316,12 +495,14 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
                 lifecycle_table(
                     known,
                     fl,
-                    arms=arms,
+                    arms=[a for a in arms if not a.startswith("U") or fam in cfg.ungated_families],
                     maintenance_tokens=maintenance_tokens,
                     where=lambda r, f=fam: r.family == f,  # type: ignore[misc]
-                )
+                ),
+                cfg.mode,
             ),
         ]
+    lines += _sensitivity(known, lg, econ_arms, maintenance_tokens)
 
     # capability behaviour
     e_rows = [r for r in known if r.arm == "E"]
@@ -362,13 +543,17 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
                     f"| {ap['capability']} | {ap['family']} | {cells} | {syn[0]}/{syn[1]} |"
                 )
 
+    if cfg.mode == "gated":
+        lines += _usage(known, arms, cfg.mode)
+        lines += _negative_transfer(known, arms)
+
     # failures and regressions
     lines += ["", "## 7. Failure and regression analysis", "", "Non-verified runs by termination:"]
     lines += ["", "| Arm | non-verified runs | termination counts |", "|---|---|---|"]
     for a in arms:
         bad = [r for r in known if r.arm == a and not r.verified]
         term = Counter(r.termination or "?" for r in bad)
-        lines.append(f"| {_label(a)} | {len(bad)} | {dict(term.most_common(5))} |")
+        lines.append(f"| {_label(a, cfg.mode)} | {len(bad)} | {dict(term.most_common(5))} |")
     lines += [
         "",
         "Regressions against the baseline: tasks A solved (>= half of repetitions) that the arm "
@@ -388,7 +573,8 @@ def render_experiment(result: ExperimentResult, *, title: str, maintenance_token
             if ry[t] >= paired.SOLVED_THRESHOLD and rx[t] < paired.SOLVED_THRESHOLD
         )
         lines.append(
-            f"| {_label(a)} | {cmp_a.only_y} | {cmp_a.only_x} | {', '.join(reg[:8]) or '-'} |"
+            f"| {_label(a, cfg.mode)} | {cmp_a.only_y} | {cmp_a.only_x} | "
+            f"{', '.join(reg[:8]) or '-'} |"
         )
 
     # mechanical verdicts

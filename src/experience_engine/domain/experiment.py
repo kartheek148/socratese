@@ -4,13 +4,27 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ARMS = ("A", "B", "C", "D", "E")
+ARMS = ("A", "B", "C", "D", "E", "F", "UB", "UC", "UD")
+LEGACY_ARMS = ("A", "B", "C", "D", "E")
+GATED_ARMS = ("A", "B", "C", "D", "E", "F")
 ARM_NAMES = {
     "A": "stateless baseline",
     "B": "episodic memory",
     "C": "consolidated memory",
     "D": "instruction reuse",
     "E": "compiled capability",
+    "F": "noise control (empty registry)",
+    "UB": "ungated episodic memory",
+    "UC": "ungated consolidated memory",
+    "UD": "ungated instruction reuse",
+}
+# gated mode: B-E read only ACTIVE assets and fall back to general planning with a reason
+ARM_NAMES_GATED = {
+    **ARM_NAMES,
+    "B": "ACTIVE episodic memory only",
+    "C": "ACTIVE consolidated memory only",
+    "D": "ACTIVE procedural memory only",
+    "E": "ACTIVE compiled capability only",
 }
 TransferLevel = Literal["source", "intra_variant", "cross_variant", "cross_family"]
 
@@ -43,6 +57,11 @@ class RunRow(_Frozen):
     fell_back: bool | None = None
     termination: str | None = None
     memory_sha256: str | None = None  # hash of the exact retrieved text (reproducibility)
+    # governed assets (gated mode): the exact version used and why none was
+    asset_kind: str | None = None  # CAPABILITY | MEMORY
+    asset_ref: str | None = None  # id@version
+    asset_family: str | None = None  # the family the asset declares
+    fallback_reason: str | None = None
 
 
 class LearningLedger(_Frozen):
@@ -58,6 +77,11 @@ class LearningLedger(_Frozen):
     wall_ms_analysis: int = 0
     wall_ms_consolidation: int = 0
     wall_ms_compilation: int = 0
+    wall_ms_memory_build: int = 0
+    # gated mode: validation tokens actually recorded for each arm's asset type (all attempts,
+    # rejected ones included); empty = use `validation_tokens` (legacy accounting)
+    validation_by_arm: dict[str, int] = Field(default_factory=dict)
+    validation_runs_by_arm: dict[str, int] = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)
 
 
@@ -80,6 +104,12 @@ class ExperimentConfig(_Frozen):
     runtime_version: str
     evaluator_version: str
     token_estimator: str = "chars/4"
+    mode: str = "legacy"  # legacy | gated
+    memory_assets: list[str] = Field(default_factory=list)  # id@version of ACTIVE memory used
+    asset_states: list[str] = Field(
+        default_factory=list
+    )  # states the catalogs were allowed to read
+    ungated_families: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
 

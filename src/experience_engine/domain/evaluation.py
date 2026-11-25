@@ -28,6 +28,7 @@ class Arm(StrEnum):
     BASELINE = "A_BASELINE"  # fixed baseline agent, no persistent learning
     MEMORY = "B_MEMORY"  # baseline + episodic hint only
     CAPABILITY = "C_CAPABILITY"  # compiled capability, fixed strategy
+    MEMORY_ASSET = "M_MEMORY_ASSET"  # baseline agent + one governed memory artifact (M5.8)
 
 
 class Verdict(StrEnum):
@@ -115,7 +116,9 @@ class LifecycleCost(_Frozen):
 
 
 class EvaluationReport(_Frozen):
-    capability_id: str
+    capability_id: str  # the asset id: a capability id or, for memory, a memory id
+    asset_kind: str = "CAPABILITY"
+    treatment_arm: str = Arm.CAPABILITY.value  # the arm whose metrics are gated
     version: int
     tenant_id: str
     risk_class: Literal["low", "medium", "high"]
@@ -142,7 +145,7 @@ class EvaluationReport(_Frozen):
 
     def n_in(self, suite: Suite) -> int:
         arms = self.suites.get(suite.value, {})
-        m = arms.get(Arm.CAPABILITY.value)
+        m = arms.get(self.treatment_arm)
         return m.n if m else 0
 
 

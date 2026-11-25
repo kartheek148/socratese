@@ -11,6 +11,7 @@ from experience_engine.domain.capability import (
     CapabilityDefinition,
     FileRolePresent,
     PathRole,
+    Precondition,
     RiskLevelAtMost,
     TaskFamilyIs,
     ToolsAvailable,
@@ -38,8 +39,13 @@ class EnvironmentFacts:
 
 def check_preconditions(definition: CapabilityDefinition, facts: EnvironmentFacts) -> list[str]:
     """Returns the list of violated preconditions (empty = applicable)."""
+    return check_conditions(definition.preconditions, facts)
+
+
+def check_conditions(conditions: Iterable[Precondition], facts: EnvironmentFacts) -> list[str]:
+    """Shared by capabilities and memory artifacts: the typed conditions that do NOT hold."""
     violations: list[str] = []
-    for p in definition.preconditions:
+    for p in conditions:
         if isinstance(p, TaskFamilyIs):
             if facts.task_family != p.family:
                 violations.append(f"task_family {facts.task_family!r} is not {p.family!r}")

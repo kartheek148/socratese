@@ -34,13 +34,15 @@ PURE = [
     "bench",
     "evaluation",
     "memory",
+    "governance",
 ]
 ALLOWED_INTERNAL = {
     "domain": {"domain"},
     "ports": {"domain", "ports"},
     "execution": {"domain", "ports", "execution", "capabilities"},
     "learning": {"domain", "ports", "learning", "capabilities"},
-    "capabilities": {"domain", "ports", "capabilities"},
+    "capabilities": {"domain", "ports", "capabilities", "governance"},
+    "governance": {"domain", "ports", "governance"},
     "evaluation": {
         "domain",
         "ports",
@@ -49,10 +51,11 @@ ALLOWED_INTERNAL = {
         "bench",
         "evaluation",
         "memory",
+        "governance",
     },
     "bench": {"domain", "ports", "execution", "bench"},
     # memory sees only trajectories/definitions: never bench, evaluation or datasets
-    "memory": {"domain", "ports", "learning", "memory"},
+    "memory": {"domain", "ports", "learning", "capabilities", "memory"},
 }
 
 

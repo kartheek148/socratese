@@ -13,35 +13,58 @@ from dataclasses import dataclass
 
 from experience_engine.domain.experiment import LearningLedger, RunRow
 
+_UNGATED = {"UB": "B", "UC": "C", "UD": "D"}
+NO_LEARNING = ("A", "F")
+
+
+def standard_validation_tokens(ledger: LearningLedger) -> float:
+    """Equal-governance price of validating one learned asset type: the mean actually recorded."""
+    spent = [v for v in ledger.validation_by_arm.values() if v > 0]
+    return sum(spent) / len(spent) if spent else 0.0
+
+
+def validation_tokens(arm: str, ledger: LearningLedger, *, equal_governance: bool) -> int:
+    """Tokens this arm's learned assets spent being validated."""
+    if arm in NO_LEARNING or arm in _UNGATED:  # ungated memory is, by definition, never validated
+        return 0
+    if ledger.validation_by_arm:
+        if equal_governance:
+            return round(standard_validation_tokens(ledger))
+        return ledger.validation_by_arm.get(arm, 0)
+    # legacy accounting: only the capability was validated as built
+    return ledger.validation_tokens if (arm == "E" or equal_governance) else 0
+
 
 def learning_tokens(arm: str, ledger: LearningLedger, *, charge_validation_to_all: bool) -> int:
-    """Tokens spent producing what this arm reuses. Arm A reuses nothing."""
-    if arm == "A":
+    """Tokens spent producing what this arm reuses (discovery, processing, consolidation or
+    compilation, validation). Arms A and F reuse nothing; ungated arms (UB/UC/UD) reuse the same
+    experience as B/C/D without validation."""
+    if arm in NO_LEARNING:
         return 0
+    kind = _UNGATED.get(arm, arm)
     base = ledger.discovery_tokens + ledger.analysis_tokens
     extra = {
         "B": 0,
         "C": ledger.consolidation_tokens,
         "D": ledger.compilation_tokens,
         "E": ledger.compilation_tokens,
-    }[arm]
-    # As built, only the capability is validated (it is the only arm with a promotion gate). The
-    # sensitivity variant charges the same validation to every learning arm.
-    validated = arm == "E" or charge_validation_to_all
-    return base + extra + (ledger.validation_tokens if validated else 0)
+    }[kind]
+    return base + extra + validation_tokens(arm, ledger, equal_governance=charge_validation_to_all)
 
 
 def learning_wall_ms(arm: str, ledger: LearningLedger) -> int:
-    if arm == "A":
+    if arm in NO_LEARNING:
         return 0
+    kind = _UNGATED.get(arm, arm)
     return (
         ledger.wall_ms_analysis
+        + ledger.wall_ms_memory_build
         + {
             "B": 0,
             "C": ledger.wall_ms_consolidation,
             "D": ledger.wall_ms_compilation,
             "E": ledger.wall_ms_compilation,
-        }[arm]
+        }[kind]
     )
 
 
@@ -80,6 +103,7 @@ def lifecycle_table(
     *,
     arms: Sequence[str],
     maintenance_tokens: int = 0,
+    revalidations: int = 0,
     charge_validation_to_all: bool = False,
     where: Callable[[RunRow], bool] | None = None,
 ) -> dict[str, ArmEconomics]:
@@ -108,8 +132,16 @@ def lifecycle_table(
         rate = ok / n if n else 0.0
         c = e / rate if rate else None
         learn = learning_tokens(arm, ledger, charge_validation_to_all=charge_validation_to_all)
-        maint = 0 if arm == "A" else maintenance_tokens
-        if arm == "A":
+        # maintenance is an ASSUMPTION, never a measurement: a fixed token amount plus
+        # `revalidations` repeats of this arm's own validation (re-run after drift)
+        maint = (
+            0
+            if arm in NO_LEARNING
+            else maintenance_tokens
+            + revalidations
+            * validation_tokens(arm, ledger, equal_governance=charge_validation_to_all)
+        )
+        if arm in NO_LEARNING:
             be_s, be_t, note = None, None, "reference"
         elif not n:
             be_s, be_t, note = None, None, "no runs"

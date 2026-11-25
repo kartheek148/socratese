@@ -102,6 +102,19 @@ uv run ee-exp report --results results.json --out report.md --maintenance-tokens
 ```
 Statistics (`evaluation/paired.py`): task-level paired bootstrap CI, exact McNemar, Holm correction, equal-token-budget curves; repetitions are averaged inside a task and never counted as tasks; UNKNOWN runs are missing data. Economics (`evaluation/economics.py`): `L + N*e + M`, break-even per verified success, as-built and equal-validation sensitivity. `ee-exp` never writes to the registry. Dataset v3 adds the hidden-only `queue` family for cross-family transfer. Results: [evaluations/capability-vs-memory-report.md](./evaluations/capability-vs-memory-report.md).
 
+## Governed memory and the gated comparison (M5.8)
+
+Memory is now a governed asset with the same lifecycle and the **unchanged** `default-low` policy as capabilities (design: [experiments/gated-memory-vs-capability-design.md](./experiments/gated-memory-vs-capability-design.md), ADR [0012](./decisions/0012-governed-memory-and-gated-comparison.md)). The generic promotion logic lives in `governance/registry.py` (`GovernedRegistry[D]`); `capabilities/registry.RegistryService` and `governance/memory.MemoryRegistryService` are thin bindings.
+
+```
+uv run ee-learn build-memory --tenant bench                       # learning plane: CANDIDATE memory (episodic/consolidated/procedural)
+uv run ee-gov evaluate --tenant bench --root DISC --private-root P1 --llm vertex --seeds 0 1 --workers 8 --out-dir evals/
+uv run ee-gov promote  --tenant bench --memory mem_procedural_pool@1 --to shadow   # then observe/canary/active exactly as ee-eval
+uv run ee-gov status   --tenant bench
+uv run ee-exp run --mode gated --tenant bench --root DISC --private-root P2 --ungated-families queue --llm vertex --reps 1 --workers 10 --out r.json --report r.md
+```
+`ee-exp --mode gated` reads only ACTIVE assets (memory *and* capabilities) from the database; a task without an applicable ACTIVE asset runs under general planning and the row records the reason. Arm F is the noise control (same path, empty registry); UB/UC/UD are ungated memory on the listed families to measure the negative transfer that gating prevents. `--experimental-states` widens the catalogs for research runs (tagged and bannered in the report). Memory applicability is typed and deterministic (family, tools, file roles, risk, exclusions), never similarity. Results: [evaluations/gated-memory-vs-capability-report.md](./evaluations/gated-memory-vs-capability-report.md).
+
 ## Known limitations
 
 * Evaluation uses the simulated benchmark. `--seeds` re-runs every task once per seed and `--workers` runs them concurrently; with `ee-bench generate --private --scale N` suites can be made larger (v2 results used x3 and 2 seeds). Repeats of one task are correlated, so the Wilson intervals are optimistic and the sample-size gates (`min_*_n`) count **distinct tasks**. `max_regressions` is an absolute count and gets stricter as runs grow. Real-model results still vary run to run. First multi-seed results: [evaluations/v2-multiseed-evaluation-and-production-run.md](./evaluations/v2-multiseed-evaluation-and-production-run.md).

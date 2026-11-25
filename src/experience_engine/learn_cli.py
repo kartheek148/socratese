@@ -3,6 +3,7 @@
   ee-learn process-jobs [--once]   build experience cases from pending learning jobs
   ee-learn compile --tenant T      compile capability CANDIDATES from eligible cases
   ee-learn candidates --tenant T   list registered candidates (read-only)
+  ee-learn build-memory --tenant T build memory CANDIDATES (episodic / consolidated / procedural)
 
 The learning plane must not hold evaluator access: it refuses to start when EE_EVALUATOR_ROLE is
 set, so a process that can read validation/hidden data can never compile capabilities.
@@ -20,13 +21,16 @@ from experience_engine.adapters.db.capability_store import SqlCapabilityStore
 from experience_engine.adapters.db.engine import InfraSettings, make_engine
 from experience_engine.adapters.db.experience_store import SqlExperienceStore
 from experience_engine.adapters.db.job_queue import SqlLearningJobQueue
+from experience_engine.adapters.db.memory_store import SqlMemoryStore
 from experience_engine.adapters.db.reader import SqlRunReader
+from experience_engine.domain.ids import new_id
 from experience_engine.learning.compiler import CompilerConfig
 from experience_engine.learning.pipeline import (
     CandidateCompilerService,
     ExperiencePipeline,
     LearningJobProcessor,
 )
+from experience_engine.memory.service import build_memory, load_experience, register_candidates
 
 
 class EvaluatorAccessError(RuntimeError):
@@ -53,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--min-support", type=int, default=3)
     ls = sub.add_parser("candidates")
     ls.add_argument("--tenant", required=True)
+    bm = sub.add_parser("build-memory")
+    bm.add_argument("--tenant", required=True)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
 
@@ -98,6 +104,32 @@ def main(argv: list[str] | None = None) -> int:
             )
         for rej in summary.rejections:
             print(f"REJECTED family={rej.family} reason={rej.reason}")
+        return 0
+    if args.command == "build-memory":
+        t0 = time.monotonic()
+        trajectories, evidence = load_experience(store, artifacts, args.tenant)
+        built = build_memory(
+            tenant_id=args.tenant,
+            trajectories=trajectories,
+            capabilities=[d for d, _ in capabilities.list_versions(args.tenant)],
+            evidence=evidence,
+            now=clock.now(),
+        )
+        for reg in register_candidates(SqlMemoryStore(engine), built.definitions):
+            print(f"{reg.kind.value} {reg.memory_id} v{reg.version} {reg.memory_type.value}")
+        for note in built.skipped:
+            print(f"SKIPPED {note}")
+        store.record_cost(
+            tenant_id=args.tenant,
+            pipeline="memory-builder",
+            subject_type="memory_build",
+            subject_id=f"{len(built.definitions)} candidates",
+            tokens=0,
+            tool_calls=0,
+            wall_ms=int((time.monotonic() - t0) * 1000),
+            correlation_id=new_id(),
+            now=clock.now(),
+        )
         return 0
     for definition, state in capabilities.list_versions(args.tenant):
         print(f"{definition.id} v{definition.version} {state.value}")

@@ -41,6 +41,10 @@ Model requests/responses, tool arguments/outputs, and verifier results are **nev
 
 `domain/redaction.py` masks known secret values (e.g. the LLM key, supplied to the `Redactor`) and common shapes (OpenAI/GitHub/Slack/AWS tokens, bearer tokens, private-key blocks, credentials in URLs, `password=`/`api_key:` pairs) in every artifact, metric string and action text **before** persistence. This is defence in depth, not a guarantee: unrecognised secret formats are not detected. Secrets must also stay out of prompts and tool output by design. Task specs are persisted verbatim and must not contain secrets.
 
+## Governed memory (M5.8, migration 0004)
+
+Memory artifacts have their own typed tables that mirror the capability tables and the same lifecycle graph: `memories` (immutable identity), `memory_versions` (immutable body + `content_hash` + state), `memory_evaluations`, `memory_transitions`, `memory_observations` (SHADOW/CANARY) and `memory_pointers` (active/previous). Evaluation, transition and observation tables are append-only (trigger); the `ee_memory_version_guard` trigger enforces the legal state graph and that `APPROVED` requires a PASS evaluation, so the rules hold for direct SQL as well. At most one ACTIVE version per memory id. Capability tables are unchanged. The memory body is typed (`domain/memory.py`): type (EPISODIC | CONSOLIDATED | PROCEDURAL), task family, applicability and exclusion conditions (the same typed precondition classes capabilities use), source experience references, provenance and a content hash that is verified on load.
+
 ## Schema changes in later milestones
 
 Planned per [fit/gap report §5](./milestone-0-fit-gap-report.md): `experience_cases` (M3), `capabilities*`/evaluation/rollout tables (M3–M4), `policy_versions` (M6), `memory_items` (M7), `cost_ledger` (G8). Each ships with its own Alembic revision.

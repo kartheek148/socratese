@@ -120,6 +120,10 @@ Roadmap gate "fresh-session transfer benchmark shows measurable value before pro
 ## Production-mode result on dataset v2
 With `pool.f12f4fa920` ACTIVE (promoted through the unchanged gates), 48 fresh private tasks x 2 seeds, real Gemini: pool family 21% (baseline) -> 94% (capability runtime), tokens per success ~24.7k -> ~2.8k; the timeout family (no ACTIVE capability, general planning) is the noise control (35% vs 48%). See [evaluations/v2-multiseed-evaluation-and-production-run.md](./evaluations/v2-multiseed-evaluation-and-production-run.md). This supersedes the "correctness value not demonstrated" statement above, which applied to v1.
 
+## Memory in production mode (M5.8)
+
+`memory/runtime.select_memory` mirrors capability eligibility for memory: only ACTIVE versions of the arm's memory type from `SqlActiveMemoryCatalog` are considered, in id order; the first whose typed applicability conditions hold and whose exclusions do not is injected (content hash verified first). Otherwise the task runs under general planning and the reason (`no ACTIVE ... memory` / `no applicable ACTIVE ... memory: ...`) is recorded with the exact `id@version` or none. Memory is not wired into the default `ee-run` path yet; it is exercised by `ee-exp --mode gated` (see [evaluation.md](./evaluation.md)).
+
 ## Not in M5 (deferred)
 
 * Live SHADOW/CANARY routing of real tasks (`capabilities/rollout.py` exists; adaptive rollout is M6).

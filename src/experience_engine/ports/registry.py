@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from experience_engine.domain.capability import CapabilityDefinition, CapabilityState
+from experience_engine.domain.capability import CapabilityState
 from experience_engine.domain.evaluation import EvaluationReport, Verdict
 from experience_engine.domain.trace import ArtifactRef
 
@@ -12,12 +12,15 @@ class StaleStateError(Exception):
 
 
 @dataclass(frozen=True)
-class VersionRecord:
+class VersionRecord[D]:
+    """One immutable version of a governed asset. `capability_id` holds the asset id (a capability
+    id or a memory id): the name is kept so capability call sites are untouched."""
+
     tenant_id: str
     capability_id: str
     version: int
     state: CapabilityState
-    definition: CapabilityDefinition
+    definition: D
 
 
 @dataclass(frozen=True)
@@ -49,10 +52,10 @@ class ObservationStats:
     regressions: int  # baseline verified but capability did not
 
 
-class RegistryStore(Protocol):
+class RegistryStore[D](Protocol):
     def get_version(
         self, tenant_id: str, capability_id: str, version: int
-    ) -> VersionRecord | None: ...
+    ) -> VersionRecord[D] | None: ...
 
     def get_pointer(self, tenant_id: str, capability_id: str) -> Pointer: ...
 

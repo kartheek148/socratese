@@ -363,6 +363,10 @@ def _imports(path: Path) -> set[str]:
 def test_learning_plane_cannot_reach_registry_executor_or_evaluation_code() -> None:
     forbidden_prefixes = (
         "experience_engine.capabilities.registry",
+        "experience_engine.governance",
+        "experience_engine.adapters.db.memory_registry_store",
+        "experience_engine.adapters.db.memory_catalog",
+        "experience_engine.gov_cli",
         "experience_engine.capabilities.executor",
         "experience_engine.capabilities.rollout",
         "experience_engine.evaluation",
@@ -376,6 +380,8 @@ def test_learning_plane_cannot_reach_registry_executor_or_evaluation_code() -> N
         SRC / "learn_cli.py",
         SRC / "adapters/db/experience_store.py",
         SRC / "adapters/db/capability_store.py",
+        SRC / "adapters/db/memory_store.py",
+        SRC / "memory" / "service.py",
         SRC / "adapters/db/job_queue.py",
     ]
     for f in files:

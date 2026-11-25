@@ -53,8 +53,8 @@ def pooled(suites: Suites, arm: Arm, names: tuple[Suite, ...]) -> tuple[int, int
     return n, verified, tokens, calls
 
 
-def success_lower_bound(suites: Suites) -> float | None:
-    n, ok, _, _ = pooled(suites, Arm.CAPABILITY, (Suite.HELD_OUT, Suite.TRANSFER))
+def success_lower_bound(suites: Suites, treatment: Arm = Arm.CAPABILITY) -> float | None:
+    n, ok, _, _ = pooled(suites, treatment, (Suite.HELD_OUT, Suite.TRANSFER))
     return wilson_interval(ok, n)[0] if n else None
 
 
@@ -64,9 +64,10 @@ def decide_verdict(
     *,
     false_applicability_rate: float | None,
     regressions: int,
+    treatment: Arm = Arm.CAPABILITY,
 ) -> tuple[Verdict, list[str]]:
     def cap(suite: Suite) -> ArmMetrics | None:
-        return suites.get(suite.value, {}).get(Arm.CAPABILITY.value)
+        return suites.get(suite.value, {}).get(treatment.value)
 
     held, transfer = cap(Suite.HELD_OUT), cap(Suite.TRANSFER)
     neg, source = cap(Suite.NEGATIVE), cap(Suite.SOURCE_REPLAY)
@@ -97,7 +98,7 @@ def decide_verdict(
         failures.append(
             f"transfer success {transfer.rate:.0%} < {policy.min_transfer_success_rate:.0%}"
         )
-    lb = success_lower_bound(suites)
+    lb = success_lower_bound(suites, treatment)
     if lb is not None and lb < policy.min_success_lower_bound:
         failures.append(
             f"95% lower bound on held-out+transfer success {lb:.0%} "
@@ -114,7 +115,7 @@ def decide_verdict(
     if regressions > policy.max_regressions:
         failures.append(f"{regressions} regressions vs baseline > allowed {policy.max_regressions}")
     if policy.max_exec_token_ratio is not None:
-        _, ok_c, tok_c, _ = pooled(suites, Arm.CAPABILITY, (Suite.HELD_OUT, Suite.TRANSFER))
+        _, ok_c, tok_c, _ = pooled(suites, treatment, (Suite.HELD_OUT, Suite.TRANSFER))
         _, ok_a, tok_a, _ = pooled(suites, Arm.BASELINE, (Suite.HELD_OUT, Suite.TRANSFER))
         if ok_c and ok_a and tok_a:
             ratio = (tok_c / ok_c) / (tok_a / ok_a)

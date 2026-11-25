@@ -485,6 +485,145 @@ rollout_observations = sa.Table(
     ),
 )
 
+# ---- governed memory (M5.8): the same lifecycle as capabilities, over its own typed tables -------
+memories = sa.Table(
+    "memories",
+    metadata,
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("memory_id", sa.Text, nullable=False),
+    sa.Column("memory_type", sa.Text, nullable=False),
+    sa.Column("task_family", sa.Text, nullable=False),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.PrimaryKeyConstraint("tenant_id", "memory_id"),
+    sa.CheckConstraint("memory_type IN ('EPISODIC','CONSOLIDATED','PROCEDURAL')", name="type"),
+)
+
+memory_versions = sa.Table(
+    "memory_versions",
+    metadata,
+    sa.Column("version_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("memory_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("state", sa.Text, nullable=False),
+    sa.Column("definition", JSONB, nullable=False),
+    sa.Column("content_hash", sa.Text, nullable=False),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.UniqueConstraint("tenant_id", "memory_id", "version"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "memory_id"], ["memories.tenant_id", "memories.memory_id"]
+    ),
+    sa.CheckConstraint(
+        "state IN (" + ",".join(f"'{s}'" for s in CAPABILITY_STATES) + ")", name="state"
+    ),
+    sa.CheckConstraint("version >= 1", name="version_positive"),
+    sa.Index("ix_memory_versions_tenant_id_state", "tenant_id", "state"),
+    # at most one ACTIVE version per memory, enforced by the database
+    sa.Index(
+        "uq_memory_versions_one_active",
+        "tenant_id",
+        "memory_id",
+        unique=True,
+        postgresql_where=sa.text("state = 'ACTIVE'"),
+    ),
+)
+
+_MEMORY_VERSION_FK = (
+    ["tenant_id", "memory_id", "version"],
+    ["memory_versions.tenant_id", "memory_versions.memory_id", "memory_versions.version"],
+)
+
+memory_evaluations = sa.Table(
+    "memory_evaluations",
+    metadata,
+    sa.Column("evaluation_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("memory_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("verdict", sa.Text, nullable=False),
+    sa.Column("risk_class", sa.Text, nullable=False),
+    sa.Column("policy_name", sa.Text, nullable=False),
+    sa.Column("policy_hash", sa.Text, nullable=False),
+    sa.Column("policy", JSONB, nullable=False),
+    sa.Column("source_replay_n", sa.Integer, nullable=False),
+    sa.Column("heldout_n", sa.Integer, nullable=False),
+    sa.Column("transfer_n", sa.Integer, nullable=False),
+    sa.Column("negative_n", sa.Integer, nullable=False),
+    sa.Column("regression_n", sa.Integer, nullable=False),
+    sa.Column("metrics", JSONB, nullable=False),
+    sa.Column("reasons", JSONB, nullable=False),
+    sa.Column("dataset_versions", JSONB, nullable=False),
+    sa.Column("model_settings", JSONB, nullable=False),
+    sa.Column("seeds", JSONB, nullable=False),
+    sa.Column("runtime_version", sa.Text, nullable=False),
+    sa.Column("verifier_version", sa.Text, nullable=False),
+    sa.Column("environment_version", sa.Text, nullable=False),
+    sa.Column("evaluator_version", sa.Text, nullable=False),
+    sa.Column("report_sha256", sa.Text, nullable=False),
+    sa.Column("started_at", _ts(), nullable=False),
+    sa.Column("completed_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_MEMORY_VERSION_FK),
+    sa.CheckConstraint("verdict IN ('PASS','FAIL','INCONCLUSIVE')", name="verdict"),
+    sa.CheckConstraint(
+        "verdict <> 'PASS' OR (heldout_n > 0 AND transfer_n > 0 AND negative_n > 0)",
+        name="pass_requires_heldout_transfer_negative",
+    ),
+    sa.Index("ix_memory_evaluations_version", "tenant_id", "memory_id", "version"),
+)
+
+memory_transitions = sa.Table(
+    "memory_transitions",
+    metadata,
+    sa.Column("transition_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("memory_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("from_state", sa.Text, nullable=False),
+    sa.Column("to_state", sa.Text, nullable=False),
+    sa.Column("actor", sa.Text, nullable=False),
+    sa.Column("reason", sa.Text, nullable=False),
+    sa.Column("evaluation_id", _uuid()),
+    sa.Column("policy_hash", sa.Text),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_MEMORY_VERSION_FK),
+    sa.ForeignKeyConstraint(["evaluation_id"], ["memory_evaluations.evaluation_id"]),
+    sa.CheckConstraint("char_length(reason) <= 500", name="reason_bounded"),
+    sa.Index("ix_memory_transitions_version", "tenant_id", "memory_id", "version"),
+)
+
+memory_pointers = sa.Table(
+    "memory_pointers",
+    metadata,
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("memory_id", sa.Text, nullable=False),
+    sa.Column("active_version", sa.Integer),
+    sa.Column("previous_version", sa.Integer),
+    sa.Column("updated_at", _ts(), nullable=False),
+    sa.PrimaryKeyConstraint("tenant_id", "memory_id"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "memory_id"], ["memories.tenant_id", "memories.memory_id"]
+    ),
+)
+
+memory_observations = sa.Table(
+    "memory_observations",
+    metadata,
+    sa.Column("observation_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("memory_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("mode", sa.Text, nullable=False),
+    sa.Column("task_id", sa.Text, nullable=False),
+    sa.Column("asset_verified", sa.Boolean, nullable=False),
+    sa.Column("baseline_verified", sa.Boolean),
+    sa.Column("asset_tokens", sa.Integer, nullable=False),
+    sa.Column("baseline_tokens", sa.Integer),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_MEMORY_VERSION_FK),
+    sa.CheckConstraint("mode IN ('SHADOW','CANARY')", name="mode"),
+    sa.Index("ix_memory_observations_version_mode", "tenant_id", "memory_id", "version", "mode"),
+)
+
 APPEND_ONLY_TABLES = (
     "trace_events",
     "run_outcomes",
@@ -496,4 +635,7 @@ APPEND_ONLY_TABLES = (
     "capability_evaluations",
     "capability_transitions",
     "rollout_observations",
+    "memory_evaluations",
+    "memory_transitions",
+    "memory_observations",
 )

@@ -9,6 +9,7 @@ the control-arm tokens spent evaluating it.
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from experience_engine import RUNTIME_VERSION
 from experience_engine.bench.dataset import BenchTask
@@ -18,6 +19,7 @@ from experience_engine.domain.benchmark import DatasetVersion
 from experience_engine.domain.capability import (
     CapabilityDefinition,
     FileRolePresent,
+    Precondition,
     RiskLevelAtMost,
     TaskFamilyIs,
     ToolsAvailable,
@@ -32,7 +34,7 @@ from experience_engine.domain.evaluation import (
     TaskResult,
 )
 from experience_engine.domain.stats import wilson_interval
-from experience_engine.evaluation.arms import ArmOutcome, ArmRunner
+from experience_engine.evaluation.arms import CURRENT_SEED, ArmOutcome, ArmRunner
 from experience_engine.evaluation.policy import decide_verdict, pooled, success_lower_bound
 from experience_engine.ports.clock import Clock
 
@@ -40,10 +42,25 @@ EVALUATOR_VERSION = "evaluator/1"
 MAX_SYNTHETIC_NEGATIVES = 4
 
 
+class _HasPreconditions(Protocol):
+    @property
+    def preconditions(self) -> Sequence[Precondition]: ...
+
+
+@dataclass(frozen=True)
+class AssetSubject:
+    """What the engine needs to know about a governed asset that is not a capability."""
+
+    asset_id: str
+    version: int
+    preconditions: list[Precondition]
+    family: str | None = None  # the family under evaluation even if the asset does not declare one
+
+
 @dataclass
 class EvaluationPlan:
     tenant_id: str
-    definition: CapabilityDefinition
+    definition: CapabilityDefinition | AssetSubject
     policy: PromotionPolicy
     clock: Clock
     arms: dict[Arm, ArmRunner]
@@ -55,6 +72,8 @@ class EvaluationPlan:
     verifier_version: str
     model_settings: dict[str, object]
     seeds: list[int]  # every task is run once per seed (independent repetitions)
+    treatment: Arm = Arm.CAPABILITY  # the gated arm (a capability, or a governed memory asset)
+    asset_kind: str = "CAPABILITY"
     workers: int = 1  # concurrent runs; arms and tasks are stateless, results keep plan order
     learning_tokens: int = 0
     learning_wall_ms: int = 0
@@ -96,7 +115,7 @@ def _metrics(
 
 
 def synthetic_negatives(
-    definition: CapabilityDefinition, tasks: Sequence[BenchTask]
+    definition: _HasPreconditions, tasks: Sequence[BenchTask]
 ) -> list[BenchTask]:
     """Environments that violate a precondition the definition declares (missing tool, missing
     file role). The capability must refuse each of them. One case per violation kind, rotating
@@ -130,8 +149,16 @@ def synthetic_negatives(
 
 def evaluate(plan: EvaluationPlan) -> EvaluationReport:
     started = plan.clock.now()
-    d = plan.definition
-    family = next((p.family for p in d.preconditions if isinstance(p, TaskFamilyIs)), "")
+    d = (
+        plan.definition
+        if isinstance(plan.definition, AssetSubject)
+        else AssetSubject(
+            plan.definition.id, plan.definition.version, plan.definition.preconditions
+        )
+    )
+    family = d.family or next(
+        (p.family for p in d.preconditions if isinstance(p, TaskFamilyIs)), ""
+    )
     risk = next((p.level for p in d.preconditions if isinstance(p, RiskLevelAtMost)), "high")
 
     suite_tasks: dict[Suite, Sequence[BenchTask]] = {
@@ -148,7 +175,11 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
         jobs: Sequence[tuple[Suite, Arm, BenchTask, int]],
     ) -> list[ArmOutcome]:
         def one(job: tuple[Suite, Arm, BenchTask, int]) -> ArmOutcome:
-            return plan.arms[job[1]](job[2])
+            token = CURRENT_SEED.set(job[3])
+            try:
+                return plan.arms[job[1]](job[2])
+            finally:
+                CURRENT_SEED.reset(token)
 
         if plan.workers <= 1:
             return [one(j) for j in jobs]
@@ -181,7 +212,7 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
             record(job[0], job[1], job[2], o, job[3])
             per_arm[job[1].value].append(o)
         suites[suite.value] = {
-            a: _metrics(o, capability_arm=(a == Arm.CAPABILITY.value), n_tasks=len(tasks))
+            a: _metrics(o, capability_arm=(a == plan.treatment.value), n_tasks=len(tasks))
             for a, o in per_arm.items()
         }
 
@@ -190,17 +221,17 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
     others = [t for t in others if t.family != family][: plan.max_negative_other_family]
     negatives = others + synthetic_negatives(d, suite_tasks[Suite.HELD_OUT])
     # refusals are decided before any step runs, so one pass (seed 0) is enough
-    neg_jobs = [(Suite.NEGATIVE, Arm.CAPABILITY, t, seeds[0]) for t in negatives]
+    neg_jobs = [(Suite.NEGATIVE, plan.treatment, t, seeds[0]) for t in negatives]
     neg_outs = run_all(neg_jobs)
     for job, o in zip(neg_jobs, neg_outs, strict=True):
         record(job[0], job[1], job[2], o, job[3])
     suites[Suite.NEGATIVE.value] = {
-        Arm.CAPABILITY.value: _metrics(neg_outs, True, n_tasks=len(negatives))
+        plan.treatment.value: _metrics(neg_outs, True, n_tasks=len(negatives))
     }
     # for the negative suite "verified" means a correct refusal
     refusals = sum(1 for o in neg_outs if o.applicable is False)
-    base_neg = suites[Suite.NEGATIVE.value][Arm.CAPABILITY.value]
-    suites[Suite.NEGATIVE.value][Arm.CAPABILITY.value] = base_neg.model_copy(
+    base_neg = suites[Suite.NEGATIVE.value][plan.treatment.value]
+    suites[Suite.NEGATIVE.value][plan.treatment.value] = base_neg.model_copy(
         update={
             "verified": refusals,
             "rate": refusals / len(neg_outs) if neg_outs else 0.0,
@@ -215,17 +246,17 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
         for t in suite_tasks[suite]:
             for sd in seeds:
                 base = results.get((suite, Arm.BASELINE, t.task.task_id, sd))
-                cap = results.get((suite, Arm.CAPABILITY, t.task.task_id, sd))
+                cap = results.get((suite, plan.treatment, t.task.task_id, sd))
                 if base and cap and base.verified:
                     reg_cap.append(cap)
                     regressions += int(not cap.verified)
-    suites[Suite.REGRESSION.value] = {Arm.CAPABILITY.value: _metrics(reg_cap, True)}
+    suites[Suite.REGRESSION.value] = {plan.treatment.value: _metrics(reg_cap, True)}
 
     # Lifecycle cost: learning + control-arm tokens spent evaluating C + C's own execution tokens.
     scored = (Suite.SOURCE_REPLAY, Suite.HELD_OUT, Suite.TRANSFER)
     _, _, tok_a, _ = pooled(suites, Arm.BASELINE, scored)
     _, _, tok_b, _ = pooled(suites, Arm.MEMORY, scored)
-    _, ok_c, tok_c, _ = pooled(suites, Arm.CAPABILITY, scored)
+    _, ok_c, tok_c, _ = pooled(suites, plan.treatment, scored)
     _, ok_a, tok_a_all, _ = pooled(suites, Arm.BASELINE, scored)
     overhead = tok_a + tok_b
     lifecycle = LifecycleCost(
@@ -241,10 +272,16 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
     )
 
     verdict, reasons = decide_verdict(
-        plan.policy, suites, false_applicability_rate=false_app, regressions=regressions
+        plan.policy,
+        suites,
+        false_applicability_rate=false_app,
+        regressions=regressions,
+        treatment=plan.treatment,
     )
     return EvaluationReport(
-        capability_id=d.id,
+        capability_id=d.asset_id,
+        asset_kind=plan.asset_kind,
+        treatment_arm=plan.treatment.value,
         version=d.version,
         tenant_id=plan.tenant_id,
         risk_class=risk,
@@ -256,7 +293,7 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
         suites=suites,
         false_applicability_rate=false_app,
         regressions=regressions,
-        success_lower_bound=success_lower_bound(suites),
+        success_lower_bound=success_lower_bound(suites, plan.treatment),
         lifecycle=lifecycle,
         dataset_versions={
             s: {"name": v.name, "version": v.version, "content_hash": v.content_hash}

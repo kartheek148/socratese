@@ -1,7 +1,7 @@
 """Paired experiment grid: every arm runs on identical tasks and repetitions, concurrently, with
 results returned in plan order. Pure orchestration; models, memory and capabilities are injected."""
 
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -61,6 +61,10 @@ def _row(arm: str, rep: int, et: ExperimentTask, o: ArmOutcome) -> RunRow:
         fell_back=o.fell_back,
         termination=o.termination,
         memory_sha256=o.memory_sha256,
+        asset_kind=o.asset_kind,
+        asset_ref=o.asset_ref,
+        asset_family=o.asset_family,
+        fallback_reason=o.fallback_reason,
     )
 
 
@@ -70,10 +74,18 @@ def run_experiment(
     *,
     repetitions: int,
     workers: int = 1,
+    arm_scope: dict[str, Callable[[ExperimentTask], bool]] | None = None,
 ) -> list[RunRow]:
     """Run the full (task x repetition x arm) grid. A runner crash becomes an UNKNOWN row (missing
     data, excluded from comparisons) so one provider failure cannot masquerade as a failure."""
-    jobs = [(a, rep, et) for et in tasks for rep in range(repetitions) for a in arms]
+    scope = arm_scope or {}
+    jobs = [
+        (a, rep, et)
+        for et in tasks
+        for rep in range(repetitions)
+        for a in arms
+        if a not in scope or scope[a](et)
+    ]
 
     def one(job: tuple[str, int, ExperimentTask]) -> RunRow:
         arm, rep, et = job
