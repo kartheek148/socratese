@@ -119,6 +119,17 @@ def test_without_a_handover_verification_the_capability_outcome_is_not_guessed()
     assert s.capability_verified is None and s.final_verified is True  # no inference either way
 
 
+def test_phase_totals_must_equal_the_sum_of_the_phases() -> None:
+    cap = CapabilityPhase(status="FALLBACK", reason="TOOL_FAILED", tokens=100)
+    fb = FallbackPhase(triggered=True, attempted=True, tokens=400)
+    ok = StrategyExecutionResult(
+        strategy_id="direct-capability", capability=cap, fallback=fb,
+        final_status="FAILURE", final_verified=False, total_tokens=500,
+    )  # fmt: skip
+    assert ok.phases_consistent()
+    assert not ok.model_copy(update={"total_tokens": 450}).phases_consistent()
+
+
 def test_fallback_causes_cover_the_executor_reasons() -> None:
     assert fallback_cause("TOOL_FAILED") == FallbackCause.TOOL_FAILURE
     assert (
@@ -351,6 +362,37 @@ def test_a_strategy_that_loses_to_the_baseline_is_harmful_and_savings_cannot_res
     assert e.serving.verdict == Verdict.FAIL
     assert e.classification == Classification.HARMFUL
     assert e.economic.verdict != Verdict.PASS  # cheaper tokens never count when serving fails
+
+
+def test_paired_harm_gate_fails_a_strategy_the_regression_estimate_cannot_see() -> None:
+    # two repetitions: the baseline is 1/2 on every task (tie -> indeterminate, so no
+    # baseline-solved tasks exist for the regression estimate) while the strategy always fails
+    rows = []
+    for i in range(30):
+        t = f"t{i:02d}"
+        for rep in (0, 1):
+            rows.append(cap_row("A", t, rep == 0, ref=None).model_copy(update={"rep": rep}))
+            rows.append(
+                cap_row("E", t, False, cap_ok=False, fallback=False).model_copy(update={"rep": rep})
+            )
+    e = evaluate(rows)
+    assert e.stats["serving_baseline_solved_tasks"] == 0
+    assert e.serving.verdict == Verdict.FAIL
+    assert "worse than the baseline by more than 5%" in " ".join(e.serving.reasons)
+    assert e.classification == Classification.HARMFUL
+
+
+def test_phase_statistics_count_only_the_evaluated_assets_own_attempts() -> None:
+    other = "pool.0123456789@2"
+    rows = []
+    for i in range(60):
+        t = f"t{i:02d}"
+        rows.append(cap_row("A", t, i % 3 == 0, ref=None))
+        rows.append(cap_row("E", t, True, cap_ok=True, ref=CAP_REF if i < 30 else other))
+    evals = {e.asset_ref: e for e in evaluate_assets(rows, POLICY, set_name="T")}
+    assert set(evals) == {CAP_REF, other}
+    assert evals[CAP_REF].phases.attempted_tasks == 30 == evals[other].phases.attempted_tasks
+    assert evals[CAP_REF].phases.capability_tokens == 30 * 200  # not 60 * 200
 
 
 def test_too_few_tasks_is_inconclusive_with_an_exact_evidence_requirement() -> None:

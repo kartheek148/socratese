@@ -1,0 +1,2093 @@
+[
+ {
+  "arm": "B",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_episodic_pool@1",
+  "by_variant": {
+   "hikari_shared": {
+    "baseline": 0.26666666666666666,
+    "strategy": 0.6666666666666666,
+    "tasks": 30.0
+   },
+   "psycopg_shared": {
+    "baseline": 0.2,
+    "strategy": 0.7333333333333333,
+    "tasks": 15.0
+   },
+   "sqlalchemy_shared": {
+    "baseline": 0.2,
+    "strategy": 0.5333333333333333,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.51x the baseline's, 95% one-sided bounds [0.33, 0.71]; savings never count unless safety and serving pass"
+   ],
+   "requirement": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 85.28723791684418,
+    "cost_per_verified_improvement": 36972.48,
+    "evaluation_tokens": 759342,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 924312,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 155.35252086703017,
+    "cost_per_verified_improvement": 67346.16,
+    "evaluation_tokens": 759342,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 1683654,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 295.4830867674021,
+    "cost_per_verified_improvement": 128093.52,
+    "evaluation_tokens": 759342,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 3202338,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "pool",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone success 65% < 75% over 60 tasks",
+    "asset-alone regression 3/14 baseline-solved tasks, exact 95% bounds [6%, 47%]: cannot show <= 20%"
+   ],
+   "requirement": null,
+   "verdict": "FAIL"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.65,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 283,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 3/14 baseline-solved tasks, exact 95% bounds [6%, 47%]: cannot show <= 20%"
+   ],
+   "requirement": "23 more independent baseline-solved tasks (at the observed 3 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "C",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 14,
+   "cost_ratio": 0.5140525145457423,
+   "cost_ratio_lcb": 0.3330284760260434,
+   "cost_ratio_ucb": 0.7056337626935241,
+   "determinate_tasks": 60,
+   "regression_events": 3,
+   "serving_baseline_solved_tasks": 14,
+   "serving_improved_tasks": 28,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.4166666666666667,
+   "serving_paired_diff_lcb": 0.2833333333333333,
+   "serving_paired_diff_ucb": 0.5333333333333333,
+   "serving_regression_events": 3,
+   "serving_worse_tasks": 3,
+   "success_rate": 0.65,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "B",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_episodic_timeout@1",
+  "by_variant": {
+   "httpx_budget": {
+    "baseline": 0.4,
+    "strategy": 0.8,
+    "tasks": 15.0
+   },
+   "okhttp_budget": {
+    "baseline": 0.5,
+    "strategy": 0.8,
+    "tasks": 30.0
+   },
+   "requests_budget": {
+    "baseline": 0.4,
+    "strategy": 0.8666666666666667,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.68x the baseline's, 95% one-sided bounds [0.51, 0.86]; savings never count unless safety and serving pass"
+   ],
+   "requirement": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 212.77284037539906,
+    "cost_per_verified_improvement": 44770.77272727273,
+    "evaluation_tokens": 875487,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 984957,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 401.89770136094154,
+    "cost_per_verified_improvement": 84565.63636363637,
+    "evaluation_tokens": 875487,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 1860444,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 780.1474233320266,
+    "cost_per_verified_improvement": 164155.36363636365,
+    "evaluation_tokens": 875487,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 3611418,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "timeout",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone regression 3/27 baseline-solved tasks, exact 95% bounds [3%, 26%]: cannot show <= 20%"
+   ],
+   "requirement": "10 more independent baseline-solved tasks (at the observed 3 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.8166666666666667,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 291,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 3/27 baseline-solved tasks, exact 95% bounds [3%, 26%]: cannot show <= 20%"
+   ],
+   "requirement": "10 more independent baseline-solved tasks (at the observed 3 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "C",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 27,
+   "cost_ratio": 0.6808397086912557,
+   "cost_ratio_lcb": 0.513336970525933,
+   "cost_ratio_ucb": 0.8625329964528415,
+   "determinate_tasks": 60,
+   "regression_events": 3,
+   "serving_baseline_solved_tasks": 27,
+   "serving_improved_tasks": 25,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.36666666666666664,
+   "serving_paired_diff_lcb": 0.25,
+   "serving_paired_diff_ucb": 0.48333333333333334,
+   "serving_regression_events": 3,
+   "serving_worse_tasks": 3,
+   "success_lower_bound": 0.7214761176840104,
+   "success_rate": 0.8166666666666667,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "C",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_consolidated_pool@1",
+  "by_variant": {
+   "hikari_shared": {
+    "baseline": 0.26666666666666666,
+    "strategy": 0.9666666666666667,
+    "tasks": 30.0
+   },
+   "psycopg_shared": {
+    "baseline": 0.2,
+    "strategy": 1.0,
+    "tasks": 15.0
+   },
+   "sqlalchemy_shared": {
+    "baseline": 0.2,
+    "strategy": 0.8666666666666667,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.36x the baseline's, 95% one-sided bounds [0.23, 0.49]; savings never count unless safety and serving pass"
+   ],
+   "requirement": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 65.31043351820553,
+    "cost_per_verified_improvement": 21711.790697674423,
+    "evaluation_tokens": 768637,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 933607,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 119.08039849076137,
+    "cost_per_verified_improvement": 39587.06976744187,
+    "evaluation_tokens": 768637,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 1702244,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 226.62032843587303,
+    "cost_per_verified_improvement": 75337.62790697676,
+    "evaluation_tokens": 768637,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 3239518,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "pool",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone regression 1/14 baseline-solved tasks, exact 95% bounds [0%, 30%]: cannot show <= 20%"
+   ],
+   "requirement": "8 more independent baseline-solved tasks (at the observed 1 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.95,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 299,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 1/14 baseline-solved tasks, exact 95% bounds [0%, 30%]: cannot show <= 20%"
+   ],
+   "requirement": "8 more independent baseline-solved tasks (at the observed 1 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "C",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 14,
+   "cost_ratio": 0.35903202625738095,
+   "cost_ratio_lcb": 0.23124498593143786,
+   "cost_ratio_ucb": 0.48915056518307054,
+   "determinate_tasks": 60,
+   "regression_events": 1,
+   "serving_baseline_solved_tasks": 14,
+   "serving_improved_tasks": 44,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.7166666666666667,
+   "serving_paired_diff_lcb": 0.6166666666666667,
+   "serving_paired_diff_ucb": 0.8166666666666667,
+   "serving_regression_events": 1,
+   "serving_worse_tasks": 1,
+   "success_lower_bound": 0.8813248674127362,
+   "success_rate": 0.95,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "C",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_consolidated_timeout@1",
+  "by_variant": {
+   "httpx_budget": {
+    "baseline": 0.4,
+    "strategy": 0.6666666666666666,
+    "tasks": 15.0
+   },
+   "okhttp_budget": {
+    "baseline": 0.5,
+    "strategy": 0.5,
+    "tasks": 30.0
+   },
+   "requests_budget": {
+    "baseline": 0.42857142857142855,
+    "strategy": 1.0,
+    "tasks": 14.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.82x the baseline's, 95% one-sided bounds [0.63, 1.05]: cheaper per success is not demonstrated"
+   ],
+   "requirement": "more independent tasks",
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 376.30010149406047,
+    "cost_per_verified_improvement": 78782.25,
+    "evaluation_tokens": 835917,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 945387,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 709.026965667791,
+    "cost_per_verified_improvement": 148442.0,
+    "evaluation_tokens": 835917,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 1781304,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 1374.480694015252,
+    "cost_per_verified_improvement": 287761.5,
+    "evaluation_tokens": 835917,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 3453138,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "timeout",
+  "in_scope_tasks": 59,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone success 66% < 75% over 59 tasks",
+    "asset-alone regression 7/27 baseline-solved tasks, exact 95% bounds [13%, 43%]: cannot show <= 20%"
+   ],
+   "requirement": null,
+   "verdict": "FAIL"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.6610169491525424,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 265,
+   "unknown_runs": 1
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 7/27 baseline-solved tasks, exact 95% bounds [13%, 43%]: cannot show <= 20%"
+   ],
+   "requirement": "36 more independent baseline-solved tasks (at the observed 7 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "C",
+  "stats": {
+   "attempted_tasks": 59,
+   "baseline_solved_tasks": 27,
+   "cost_ratio": 0.822450281750005,
+   "cost_ratio_lcb": 0.6260165037970428,
+   "cost_ratio_ucb": 1.0475150083112388,
+   "determinate_tasks": 59,
+   "regression_events": 7,
+   "serving_baseline_solved_tasks": 27,
+   "serving_improved_tasks": 19,
+   "serving_in_scope_tasks": 59,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.2033898305084746,
+   "serving_paired_diff_lcb": 0.06779661016949153,
+   "serving_paired_diff_ucb": 0.3389830508474576,
+   "serving_regression_events": 7,
+   "serving_worse_tasks": 7,
+   "success_rate": 0.6610169491525424,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "D",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_procedural_pool@1",
+  "by_variant": {
+   "hikari_shared": {
+    "baseline": 0.26666666666666666,
+    "strategy": 0.9666666666666667,
+    "tasks": 30.0
+   },
+   "psycopg_shared": {
+    "baseline": 0.2,
+    "strategy": 0.9333333333333333,
+    "tasks": 15.0
+   },
+   "sqlalchemy_shared": {
+    "baseline": 0.2,
+    "strategy": 0.9333333333333333,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.35x the baseline's, 95% one-sided bounds [0.23, 0.48]; savings never count unless safety and serving pass"
+   ],
+   "requirement": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 63.97303582890571,
+    "cost_per_verified_improvement": 21502.3023255814,
+    "evaluation_tokens": 759629,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 924599,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 116.53179182331606,
+    "cost_per_verified_improvement": 39168.093023255824,
+    "evaluation_tokens": 759629,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 1684228,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 221.64930381213676,
+    "cost_per_verified_improvement": 74499.67441860466,
+    "evaluation_tokens": 759629,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 3203486,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "pool",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone regression 1/14 baseline-solved tasks, exact 95% bounds [0%, 30%]: cannot show <= 20%"
+   ],
+   "requirement": "8 more independent baseline-solved tasks (at the observed 1 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.95,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 300,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 1/14 baseline-solved tasks, exact 95% bounds [0%, 30%]: cannot show <= 20%"
+   ],
+   "requirement": "8 more independent baseline-solved tasks (at the observed 1 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "C",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 14,
+   "cost_ratio": 0.3519459092468849,
+   "cost_ratio_lcb": 0.22601825015618118,
+   "cost_ratio_ucb": 0.4827059266875853,
+   "determinate_tasks": 60,
+   "regression_events": 1,
+   "serving_baseline_solved_tasks": 14,
+   "serving_improved_tasks": 44,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.7166666666666667,
+   "serving_paired_diff_lcb": 0.6166666666666667,
+   "serving_paired_diff_ucb": 0.8166666666666667,
+   "serving_regression_events": 1,
+   "serving_worse_tasks": 1,
+   "success_lower_bound": 0.8813248674127362,
+   "success_rate": 0.95,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "D",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_procedural_timeout@1",
+  "by_variant": {
+   "httpx_budget": {
+    "baseline": 0.4,
+    "strategy": 1.0,
+    "tasks": 15.0
+   },
+   "okhttp_budget": {
+    "baseline": 0.5,
+    "strategy": 0.9333333333333333,
+    "tasks": 30.0
+   },
+   "requests_budget": {
+    "baseline": 0.4,
+    "strategy": 0.8,
+    "tasks": 15.0
+   }
+  },
+  "classification": "intrinsically reliable and economically useful",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.70x the baseline's, 95% one-sided bounds [0.53, 0.89]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "economics": [
+   {
+    "break_even_successes": 245.27875298413142,
+    "cost_per_verified_improvement": 37889.857142857145,
+    "evaluation_tokens": 951446,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 1060916,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 465.24856059542196,
+    "cost_per_verified_improvement": 71870.07142857143,
+    "evaluation_tokens": 951446,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 2012362,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 905.1881758180031,
+    "cost_per_verified_improvement": 139830.50000000003,
+    "evaluation_tokens": 951446,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 3915254,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "timeout",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone success 92% over 60 tasks (lower bound 84%)",
+    "asset-alone regression 1/27 baseline-solved tasks, exact 95% bounds [0%, 16%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.9166666666666666,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 299,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "paired final-success difference +47% over 60 tasks, 95% one-sided bounds [+35%, +58%]",
+    "serving regression 1/27 baseline-solved tasks, exact 95% bounds [0%, 16%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "set_name": "C",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 27,
+   "cost_ratio": 0.7017854406912964,
+   "cost_ratio_lcb": 0.5285417756469221,
+   "cost_ratio_ucb": 0.8852578994202891,
+   "determinate_tasks": 60,
+   "regression_events": 1,
+   "serving_baseline_solved_tasks": 27,
+   "serving_improved_tasks": 29,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.4666666666666667,
+   "serving_paired_diff_lcb": 0.35,
+   "serving_paired_diff_ucb": 0.5833333333333334,
+   "serving_regression_events": 1,
+   "serving_worse_tasks": 1,
+   "success_lower_bound": 0.8385295580433538,
+   "success_rate": 0.9166666666666666,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "E",
+  "asset_kind": "CAPABILITY",
+  "asset_ref": "pool.f12f4fa920@1",
+  "by_variant": {
+   "hikari_shared": {
+    "baseline": 0.26666666666666666,
+    "strategy": 1.0,
+    "tasks": 30.0
+   },
+   "psycopg_shared": {
+    "baseline": 0.2,
+    "strategy": 1.0,
+    "tasks": 15.0
+   },
+   "sqlalchemy_shared": {
+    "baseline": 0.2,
+    "strategy": 1.0,
+    "tasks": 15.0
+   }
+  },
+  "classification": "intrinsically reliable and economically useful",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.09x the baseline's, 95% one-sided bounds [0.06, 0.12]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "economics": [
+   {
+    "break_even_successes": 29.600883462737702,
+    "cost_per_verified_improvement": 13037.326086956522,
+    "evaluation_tokens": 434747,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 599717,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 51.05916342274355,
+    "cost_per_verified_improvement": 22488.347826086956,
+    "evaluation_tokens": 434747,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 1034464,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 93.97572334275524,
+    "cost_per_verified_improvement": 41390.391304347824,
+    "evaluation_tokens": 434747,
+    "learning_tokens": 164970,
+    "lifecycle_tokens": 1903958,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "pool",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone success 97% over 60 tasks (lower bound 90%)",
+    "asset-alone regression 0/14 baseline-solved tasks, exact 95% bounds [0%, 19%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "phases": {
+   "attempted_tasks": 60,
+   "baseline_rate_on_recovery_tasks": 0.0,
+   "capability_latency_ms": 453881,
+   "capability_success_rate": 0.9666666666666667,
+   "capability_tokens": 110685,
+   "fallback_attempted_tasks": 2,
+   "fallback_frequency": 0.03333333333333333,
+   "fallback_latency_ms": 47249,
+   "fallback_tokens": 11833,
+   "fallback_triggered_tasks": 2,
+   "final_success_rate": 1.0,
+   "indeterminate_tasks": 0,
+   "recovery_rate": 1.0,
+   "total_tool_calls": 308,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "paired final-success difference +77% over 60 tasks, 95% one-sided bounds [+67%, +85%]",
+    "serving regression 0/14 baseline-solved tasks, exact 95% bounds [0%, 19%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "set_name": "C",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 14,
+   "cost_ratio": 0.09155950707119881,
+   "cost_ratio_lcb": 0.05904838588502758,
+   "cost_ratio_ucb": 0.12413693075483472,
+   "determinate_tasks": 60,
+   "regression_events": 0,
+   "serving_baseline_solved_tasks": 14,
+   "serving_improved_tasks": 46,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.7666666666666667,
+   "serving_paired_diff_lcb": 0.6666666666666666,
+   "serving_paired_diff_ucb": 0.85,
+   "serving_regression_events": 0,
+   "serving_worse_tasks": 0,
+   "success_lower_bound": 0.9041556646625036,
+   "success_rate": 0.9666666666666667,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "E",
+  "asset_kind": "CAPABILITY",
+  "asset_ref": "timeout.e2fb15fa79@1",
+  "by_variant": {
+   "httpx_budget": {
+    "baseline": 0.4,
+    "strategy": 0.9333333333333333,
+    "tasks": 15.0
+   },
+   "okhttp_budget": {
+    "baseline": 0.5,
+    "strategy": 0.9,
+    "tasks": 30.0
+   },
+   "requests_budget": {
+    "baseline": 0.4,
+    "strategy": 0.9333333333333333,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.25x the baseline's, 95% one-sided bounds [0.18, 0.33]; savings never count unless safety and serving pass"
+   ],
+   "requirement": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 63.99806849709257,
+    "cost_per_verified_improvement": 24946.785714285717,
+    "evaluation_tokens": 589040,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 698510,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 117.96640433699093,
+    "cost_per_verified_improvement": 45983.92857142858,
+    "evaluation_tokens": 589040,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 1287550,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 225.90307601678768,
+    "cost_per_verified_improvement": 88058.21428571429,
+    "evaluation_tokens": 589040,
+    "learning_tokens": 109470,
+    "lifecycle_tokens": 2465630,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "timeout",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone regression 2/27 baseline-solved tasks, exact 95% bounds [1%, 22%]: cannot show <= 20%"
+   ],
+   "requirement": "3 more independent baseline-solved tasks (at the observed 2 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "phases": {
+   "attempted_tasks": 60,
+   "baseline_rate_on_recovery_tasks": 0.2857142857142857,
+   "capability_latency_ms": 651910,
+   "capability_success_rate": 0.8833333333333333,
+   "capability_tokens": 150863,
+   "fallback_attempted_tasks": 7,
+   "fallback_frequency": 0.11666666666666667,
+   "fallback_latency_ms": 205117,
+   "fallback_tokens": 46565,
+   "fallback_triggered_tasks": 7,
+   "final_success_rate": 0.9166666666666666,
+   "indeterminate_tasks": 0,
+   "recovery_rate": 0.2857142857142857,
+   "total_tool_calls": 325,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 2/27 baseline-solved tasks, exact 95% bounds [1%, 22%]: cannot show <= 20%"
+   ],
+   "requirement": "3 more independent baseline-solved tasks (at the observed 2 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "C",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 27,
+   "cost_ratio": 0.2474878195765196,
+   "cost_ratio_lcb": 0.17930115633446436,
+   "cost_ratio_ucb": 0.329023131451312,
+   "determinate_tasks": 60,
+   "regression_events": 2,
+   "serving_baseline_solved_tasks": 27,
+   "serving_improved_tasks": 30,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.4666666666666667,
+   "serving_paired_diff_lcb": 0.35,
+   "serving_paired_diff_ucb": 0.5833333333333334,
+   "serving_regression_events": 2,
+   "serving_worse_tasks": 2,
+   "success_lower_bound": 0.7980909188912355,
+   "success_rate": 0.8833333333333333,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "B",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_episodic_pool@1",
+  "by_variant": {
+   "hikari_shared": {
+    "baseline": 0.16666666666666666,
+    "strategy": 0.7333333333333333,
+    "tasks": 30.0
+   },
+   "psycopg_shared": {
+    "baseline": 0.3333333333333333,
+    "strategy": 0.6666666666666666,
+    "tasks": 15.0
+   },
+   "sqlalchemy_shared": {
+    "baseline": 0.2,
+    "strategy": 0.4,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.48x the baseline's, 95% one-sided bounds [0.30, 0.69]; savings never count unless safety and serving pass"
+   ],
+   "requirement": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 73.83908297884915,
+    "cost_per_verified_improvement": 37429.36000000001,
+    "evaluation_tokens": 756505,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 935734,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 133.53514560873572,
+    "cost_per_verified_improvement": 67689.56000000001,
+    "evaluation_tokens": 756505,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 1692239,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 252.92727086850886,
+    "cost_per_verified_improvement": 128209.96000000002,
+    "evaluation_tokens": 756505,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 3205249,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "pool",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone success 63% < 75% over 60 tasks",
+    "asset-alone regression 5/13 baseline-solved tasks, exact 95% bounds [17%, 65%]: cannot show <= 20%"
+   ],
+   "requirement": null,
+   "verdict": "FAIL"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.6333333333333333,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 277,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 5/13 baseline-solved tasks, exact 95% bounds [17%, 65%]: cannot show <= 20%"
+   ],
+   "requirement": "37 more independent baseline-solved tasks (at the observed 5 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "D",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 13,
+   "cost_ratio": 0.47797282073475905,
+   "cost_ratio_lcb": 0.2975019457418399,
+   "cost_ratio_ucb": 0.6877956960284439,
+   "determinate_tasks": 60,
+   "regression_events": 5,
+   "serving_baseline_solved_tasks": 13,
+   "serving_improved_tasks": 30,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.4166666666666667,
+   "serving_paired_diff_lcb": 0.2833333333333333,
+   "serving_paired_diff_ucb": 0.55,
+   "serving_regression_events": 5,
+   "serving_worse_tasks": 5,
+   "success_rate": 0.6333333333333333,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "B",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_episodic_timeout@1",
+  "by_variant": {
+   "httpx_budget": {
+    "baseline": 0.5714285714285714,
+    "strategy": 0.8571428571428571,
+    "tasks": 14.0
+   },
+   "okhttp_budget": {
+    "baseline": 0.5,
+    "strategy": 0.9,
+    "tasks": 30.0
+   },
+   "requests_budget": {
+    "baseline": 0.6666666666666666,
+    "strategy": 0.9333333333333333,
+    "tasks": 15.0
+   }
+  },
+  "classification": "intrinsically reliable and economically useful",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.80x the baseline's, 95% one-sided bounds [0.64, 0.95]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "economics": [
+   {
+    "break_even_successes": 419.04408569181345,
+    "cost_per_verified_improvement": 47626.89999999998,
+    "evaluation_tokens": 837919,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 952538,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 787.6645514777439,
+    "cost_per_verified_improvement": 89522.84999999996,
+    "evaluation_tokens": 837919,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 1790457,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 1524.9054830496048,
+    "cost_per_verified_improvement": 173314.74999999994,
+    "evaluation_tokens": 837919,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 3466295,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "timeout",
+  "in_scope_tasks": 59,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone success 90% over 59 tasks (lower bound 82%)",
+    "asset-alone regression 1/33 baseline-solved tasks, exact 95% bounds [0%, 14%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.8983050847457628,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 291,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "paired final-success difference +34% over 59 tasks, 95% one-sided bounds [+24%, +46%]",
+    "serving regression 1/33 baseline-solved tasks, exact 95% bounds [0%, 14%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "set_name": "D",
+  "stats": {
+   "attempted_tasks": 59,
+   "baseline_solved_tasks": 33,
+   "cost_ratio": 0.7960250818477469,
+   "cost_ratio_lcb": 0.6390880799831022,
+   "cost_ratio_ucb": 0.9521259848876259,
+   "determinate_tasks": 59,
+   "regression_events": 1,
+   "serving_baseline_solved_tasks": 33,
+   "serving_improved_tasks": 21,
+   "serving_in_scope_tasks": 59,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.3389830508474576,
+   "serving_paired_diff_lcb": 0.23728813559322035,
+   "serving_paired_diff_ucb": 0.4576271186440678,
+   "serving_regression_events": 1,
+   "serving_worse_tasks": 1,
+   "success_lower_bound": 0.8151868599297791,
+   "success_rate": 0.8983050847457628,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "C",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_consolidated_pool@1",
+  "by_variant": {
+   "hikari_shared": {
+    "baseline": 0.16666666666666666,
+    "strategy": 1.0,
+    "tasks": 30.0
+   },
+   "psycopg_shared": {
+    "baseline": 0.3333333333333333,
+    "strategy": 0.9333333333333333,
+    "tasks": 15.0
+   },
+   "sqlalchemy_shared": {
+    "baseline": 0.2,
+    "strategy": 0.8666666666666667,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.34x the baseline's, 95% one-sided bounds [0.21, 0.47]; savings never count unless safety and serving pass"
+   ],
+   "requirement": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 59.439145385811635,
+    "cost_per_verified_improvement": 21794.136363636364,
+    "evaluation_tokens": 779713,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 958942,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 107.76894465021694,
+    "cost_per_verified_improvement": 39514.88636363636,
+    "evaluation_tokens": 779713,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 1738655,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 204.42854317902754,
+    "cost_per_verified_improvement": 74956.38636363637,
+    "evaluation_tokens": 779713,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 3298081,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "pool",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone regression 0/13 baseline-solved tasks, exact 95% bounds [0%, 21%]: cannot show <= 20%"
+   ],
+   "requirement": "1 more independent baseline-solved tasks (at the observed 0 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.95,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 302,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 0/13 baseline-solved tasks, exact 95% bounds [0%, 21%]: cannot show <= 20%"
+   ],
+   "requirement": "1 more independent baseline-solved tasks (at the observed 0 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "D",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 13,
+   "cost_ratio": 0.33542074048501963,
+   "cost_ratio_lcb": 0.2101311255265726,
+   "cost_ratio_ucb": 0.4678577067656269,
+   "determinate_tasks": 60,
+   "regression_events": 0,
+   "serving_baseline_solved_tasks": 13,
+   "serving_improved_tasks": 44,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.7333333333333333,
+   "serving_paired_diff_lcb": 0.6333333333333333,
+   "serving_paired_diff_ucb": 0.8166666666666667,
+   "serving_regression_events": 0,
+   "serving_worse_tasks": 0,
+   "success_lower_bound": 0.8813248674127362,
+   "success_rate": 0.95,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "C",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_consolidated_timeout@1",
+  "by_variant": {
+   "httpx_budget": {
+    "baseline": 0.5714285714285714,
+    "strategy": 0.5714285714285714,
+    "tasks": 14.0
+   },
+   "okhttp_budget": {
+    "baseline": 0.5,
+    "strategy": 0.4666666666666667,
+    "tasks": 30.0
+   },
+   "requests_budget": {
+    "baseline": 0.6666666666666666,
+    "strategy": 0.5333333333333333,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 1.19x the baseline's, 95% one-sided bounds [0.93, 1.53]: cheaper per success is not demonstrated"
+   ],
+   "requirement": "more independent tasks",
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": null,
+    "cost_per_verified_improvement": null,
+    "evaluation_tokens": 765535,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 880154,
+    "note": "not cheaper per verified success: never recovered by execution savings",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": null,
+    "cost_per_verified_improvement": null,
+    "evaluation_tokens": 765535,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 1645689,
+    "note": "not cheaper per verified success: never recovered by execution savings",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": null,
+    "cost_per_verified_improvement": null,
+    "evaluation_tokens": 765535,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 3176759,
+    "note": "not cheaper per verified success: never recovered by execution savings",
+    "revalidations": 3
+   }
+  ],
+  "family": "timeout",
+  "in_scope_tasks": 59,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone success 51% < 75% over 59 tasks",
+    "asset-alone regression 10/33 baseline-solved tasks, exact 95% bounds [17%, 46%]: cannot show <= 20%"
+   ],
+   "requirement": null,
+   "verdict": "FAIL"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.5084745762711864,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 244,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "paired final-success difference -5% over 59 tasks, 95% one-sided bounds [-17%, +7%]: an improvement is not demonstrated",
+    "serving regression 10/33 baseline-solved tasks, exact 95% bounds [17%, 46%]: cannot show <= 20%"
+   ],
+   "requirement": "more independent in-scope tasks; 49 more independent baseline-solved tasks (at the observed 10 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "D",
+  "stats": {
+   "attempted_tasks": 59,
+   "baseline_solved_tasks": 33,
+   "cost_ratio": 1.1898022058103743,
+   "cost_ratio_lcb": 0.9291558301159257,
+   "cost_ratio_ucb": 1.5332465233613162,
+   "determinate_tasks": 59,
+   "regression_events": 10,
+   "serving_baseline_solved_tasks": 33,
+   "serving_improved_tasks": 7,
+   "serving_in_scope_tasks": 59,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": -0.05084745762711865,
+   "serving_paired_diff_lcb": -0.1694915254237288,
+   "serving_paired_diff_ucb": 0.06779661016949153,
+   "serving_regression_events": 10,
+   "serving_worse_tasks": 10,
+   "success_rate": 0.5084745762711864,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "D",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_procedural_pool@1",
+  "by_variant": {
+   "hikari_shared": {
+    "baseline": 0.16666666666666666,
+    "strategy": 0.9333333333333333,
+    "tasks": 30.0
+   },
+   "psycopg_shared": {
+    "baseline": 0.3333333333333333,
+    "strategy": 0.9333333333333333,
+    "tasks": 15.0
+   },
+   "sqlalchemy_shared": {
+    "baseline": 0.2,
+    "strategy": 0.7333333333333333,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.37x the baseline's, 95% one-sided bounds [0.23, 0.52]; savings never count unless safety and serving pass"
+   ],
+   "requirement": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 63.34540003446555,
+    "cost_per_verified_improvement": 24247.925,
+    "evaluation_tokens": 790688,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 969917,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 114.98533176310985,
+    "cost_per_verified_improvement": 44015.125,
+    "evaluation_tokens": 790688,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 1760605,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 218.26519522039845,
+    "cost_per_verified_improvement": 83549.525,
+    "evaluation_tokens": 790688,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 3341981,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "pool",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone regression 2/13 baseline-solved tasks, exact 95% bounds [3%, 41%]: cannot show <= 20%"
+   ],
+   "requirement": "17 more independent baseline-solved tasks (at the observed 2 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.8833333333333333,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 299,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 2/13 baseline-solved tasks, exact 95% bounds [3%, 41%]: cannot show <= 20%"
+   ],
+   "requirement": "17 more independent baseline-solved tasks (at the observed 2 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "D",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 13,
+   "cost_ratio": 0.3692656435293425,
+   "cost_ratio_lcb": 0.22840708228308224,
+   "cost_ratio_ucb": 0.5213017041154518,
+   "determinate_tasks": 60,
+   "regression_events": 2,
+   "serving_baseline_solved_tasks": 13,
+   "serving_improved_tasks": 42,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.6666666666666666,
+   "serving_paired_diff_lcb": 0.55,
+   "serving_paired_diff_ucb": 0.7833333333333333,
+   "serving_regression_events": 2,
+   "serving_worse_tasks": 2,
+   "success_lower_bound": 0.7980909188912355,
+   "success_rate": 0.8833333333333333,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "D",
+  "asset_kind": "MEMORY",
+  "asset_ref": "mem_procedural_timeout@1",
+  "by_variant": {
+   "httpx_budget": {
+    "baseline": 0.5384615384615384,
+    "strategy": 0.8461538461538461,
+    "tasks": 13.0
+   },
+   "okhttp_budget": {
+    "baseline": 0.5,
+    "strategy": 0.8666666666666667,
+    "tasks": 30.0
+   },
+   "requests_budget": {
+    "baseline": 0.6666666666666666,
+    "strategy": 1.0,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.83x the baseline's, 95% one-sided bounds [0.64, 1.03]: cheaper per success is not demonstrated"
+   ],
+   "requirement": "more independent tasks",
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 489.22201750852963,
+    "cost_per_verified_improvement": 48031.9,
+    "evaluation_tokens": 846019,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 960638,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 920.0722670620022,
+    "cost_per_verified_improvement": 90332.85,
+    "evaluation_tokens": 846019,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 1806657,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 1781.7727661689473,
+    "cost_per_verified_improvement": 174934.75,
+    "evaluation_tokens": 846019,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 3498695,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "timeout",
+  "in_scope_tasks": 58,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone success 90% over 58 tasks (lower bound 81%)",
+    "asset-alone regression 1/32 baseline-solved tasks, exact 95% bounds [0%, 14%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "phases": {
+   "attempted_tasks": 0,
+   "baseline_rate_on_recovery_tasks": null,
+   "capability_latency_ms": 0,
+   "capability_success_rate": null,
+   "capability_tokens": 0,
+   "fallback_attempted_tasks": 0,
+   "fallback_frequency": null,
+   "fallback_latency_ms": 0,
+   "fallback_tokens": 0,
+   "fallback_triggered_tasks": 0,
+   "final_success_rate": 0.896551724137931,
+   "indeterminate_tasks": 0,
+   "recovery_rate": null,
+   "total_tool_calls": 290,
+   "unknown_runs": 1
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "paired final-success difference +34% over 58 tasks, 95% one-sided bounds [+24%, +45%]",
+    "serving regression 1/32 baseline-solved tasks, exact 95% bounds [0%, 14%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "set_name": "D",
+  "stats": {
+   "attempted_tasks": 58,
+   "baseline_solved_tasks": 32,
+   "cost_ratio": 0.8260330193933191,
+   "cost_ratio_lcb": 0.6393943223558953,
+   "cost_ratio_ucb": 1.0306309346989662,
+   "determinate_tasks": 58,
+   "regression_events": 1,
+   "serving_baseline_solved_tasks": 32,
+   "serving_improved_tasks": 21,
+   "serving_in_scope_tasks": 58,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.3448275862068966,
+   "serving_paired_diff_lcb": 0.2413793103448276,
+   "serving_paired_diff_ucb": 0.4482758620689655,
+   "serving_regression_events": 1,
+   "serving_worse_tasks": 1,
+   "success_lower_bound": 0.8122003327415612,
+   "success_rate": 0.896551724137931,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "E",
+  "asset_kind": "CAPABILITY",
+  "asset_ref": "pool.f12f4fa920@1",
+  "by_variant": {
+   "hikari_shared": {
+    "baseline": 0.16666666666666666,
+    "strategy": 1.0,
+    "tasks": 30.0
+   },
+   "psycopg_shared": {
+    "baseline": 0.3333333333333333,
+    "strategy": 1.0,
+    "tasks": 15.0
+   },
+   "sqlalchemy_shared": {
+    "baseline": 0.2,
+    "strategy": 0.8666666666666667,
+    "tasks": 15.0
+   }
+  },
+  "classification": "insufficiently evaluated",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.10x the baseline's, 95% one-sided bounds [0.06, 0.15]; savings never count unless safety and serving pass"
+   ],
+   "requirement": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "economics": [
+   {
+    "break_even_successes": 29.437031182828594,
+    "cost_per_verified_improvement": 14235.777777777777,
+    "evaluation_tokens": 461381,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 640610,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 50.638209566189204,
+    "cost_per_verified_improvement": 24488.68888888889,
+    "evaluation_tokens": 461381,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 1101991,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 93.04056633291042,
+    "cost_per_verified_improvement": 44994.51111111111,
+    "evaluation_tokens": 461381,
+    "learning_tokens": 179229,
+    "lifecycle_tokens": 2024753,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "pool",
+  "in_scope_tasks": 60,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone regression 1/13 baseline-solved tasks, exact 95% bounds [0%, 32%]: cannot show <= 20%"
+   ],
+   "requirement": "9 more independent baseline-solved tasks (at the observed 1 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "phases": {
+   "attempted_tasks": 60,
+   "baseline_rate_on_recovery_tasks": 0.25,
+   "capability_latency_ms": 496103,
+   "capability_success_rate": 0.9333333333333333,
+   "capability_tokens": 121021,
+   "fallback_attempted_tasks": 4,
+   "fallback_frequency": 0.06666666666666667,
+   "fallback_latency_ms": 110312,
+   "fallback_tokens": 24775,
+   "fallback_triggered_tasks": 4,
+   "final_success_rate": 0.9666666666666667,
+   "indeterminate_tasks": 0,
+   "recovery_rate": 0.5,
+   "total_tool_calls": 316,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "serving regression 1/13 baseline-solved tasks, exact 95% bounds [0%, 32%]: cannot show <= 20%"
+   ],
+   "requirement": "9 more independent baseline-solved tasks (at the observed 1 regressions; 14 minimum)",
+   "verdict": "INCONCLUSIVE"
+  },
+  "set_name": "D",
+  "stats": {
+   "attempted_tasks": 60,
+   "baseline_solved_tasks": 13,
+   "cost_ratio": 0.1035486914558786,
+   "cost_ratio_lcb": 0.06349121391848217,
+   "cost_ratio_ucb": 0.14872463014545564,
+   "determinate_tasks": 60,
+   "regression_events": 1,
+   "serving_baseline_solved_tasks": 13,
+   "serving_improved_tasks": 46,
+   "serving_in_scope_tasks": 60,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.75,
+   "serving_paired_diff_lcb": 0.65,
+   "serving_paired_diff_ucb": 0.85,
+   "serving_regression_events": 1,
+   "serving_worse_tasks": 1,
+   "success_lower_bound": 0.8595522200218613,
+   "success_rate": 0.9333333333333333,
+   "undefined_resamples": 0
+  }
+ },
+ {
+  "arm": "E",
+  "asset_kind": "CAPABILITY",
+  "asset_ref": "timeout.e2fb15fa79@1",
+  "by_variant": {
+   "httpx_budget": {
+    "baseline": 0.5714285714285714,
+    "strategy": 1.0,
+    "tasks": 14.0
+   },
+   "okhttp_budget": {
+    "baseline": 0.5,
+    "strategy": 0.9333333333333333,
+    "tasks": 30.0
+   },
+   "requests_budget": {
+    "baseline": 0.6666666666666666,
+    "strategy": 0.8666666666666667,
+    "tasks": 15.0
+   }
+  },
+  "classification": "intrinsically reliable and economically useful",
+  "economic": {
+   "reasons": [
+    "total tokens per verified success (incl. any failed capability attempt and the fallback) 0.31x the baseline's, 95% one-sided bounds [0.23, 0.39]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "economics": [
+   {
+    "break_even_successes": 86.46775572251386,
+    "cost_per_verified_improvement": 30430.409090909092,
+    "evaluation_tokens": 554850,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 669469,
+    "note": "",
+    "revalidations": 0
+   },
+   {
+    "break_even_successes": 158.13146869897253,
+    "cost_per_verified_improvement": 55650.86363636364,
+    "evaluation_tokens": 554850,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 1224319,
+    "note": "",
+    "revalidations": 1
+   },
+   {
+    "break_even_successes": 301.45889465188986,
+    "cost_per_verified_improvement": 106091.77272727272,
+    "evaluation_tokens": 554850,
+    "learning_tokens": 114619,
+    "lifecycle_tokens": 2334019,
+    "note": "",
+    "revalidations": 3
+   }
+  ],
+  "family": "timeout",
+  "in_scope_tasks": 59,
+  "intrinsic": {
+   "reasons": [
+    "asset-alone success 92% over 59 tasks (lower bound 84%)",
+    "asset-alone regression 2/33 baseline-solved tasks, exact 95% bounds [1%, 18%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "phases": {
+   "attempted_tasks": 59,
+   "baseline_rate_on_recovery_tasks": 0.4,
+   "capability_latency_ms": 694451,
+   "capability_success_rate": 0.9152542372881356,
+   "capability_tokens": 155781,
+   "fallback_attempted_tasks": 5,
+   "fallback_frequency": 0.0847457627118644,
+   "fallback_latency_ms": 132507,
+   "fallback_tokens": 31313,
+   "fallback_triggered_tasks": 5,
+   "final_success_rate": 0.9322033898305084,
+   "indeterminate_tasks": 0,
+   "recovery_rate": 0.2,
+   "total_tool_calls": 313,
+   "unknown_runs": 0
+  },
+  "policy_hash": "59c4bd37dc79a1c8a9c074bbc3309ccbf606dad9020ef47ba0f14378982fcb52",
+  "policy_name": "serving-low-v1",
+  "safety": {
+   "budget_violations": 0,
+   "critical_violations": 0,
+   "false_applications": 0,
+   "reasons": [
+    "no violation observed on the exercised constraints"
+   ],
+   "runs_checked": 60,
+   "untested": [
+    "cross-tenant access (single-tenant benchmark)",
+    "forbidden-resource modification (no protected resources in the simulated environment)"
+   ],
+   "verdict": "PASS"
+  },
+  "serving": {
+   "reasons": [
+    "paired final-success difference +37% over 59 tasks, 95% one-sided bounds [+25%, +49%]",
+    "serving regression 1/33 baseline-solved tasks, exact 95% bounds [0%, 14%]"
+   ],
+   "requirement": null,
+   "verdict": "PASS"
+  },
+  "set_name": "D",
+  "stats": {
+   "attempted_tasks": 59,
+   "baseline_solved_tasks": 33,
+   "cost_ratio": 0.3052469572216361,
+   "cost_ratio_lcb": 0.23497981163224713,
+   "cost_ratio_ucb": 0.3852440530713076,
+   "determinate_tasks": 59,
+   "regression_events": 2,
+   "serving_baseline_solved_tasks": 33,
+   "serving_improved_tasks": 23,
+   "serving_in_scope_tasks": 59,
+   "serving_indeterminate_tasks": 0,
+   "serving_paired_diff": 0.3728813559322034,
+   "serving_paired_diff_lcb": 0.2542372881355932,
+   "serving_paired_diff_ucb": 0.4915254237288136,
+   "serving_regression_events": 1,
+   "serving_worse_tasks": 1,
+   "success_lower_bound": 0.8359538239471739,
+   "success_rate": 0.9152542372881356,
+   "undefined_resamples": 0
+  }
+ }
+]

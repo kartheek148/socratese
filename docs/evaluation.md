@@ -131,6 +131,17 @@ python -m experience_engine.evaluation.policy_simulation   # retrospective simul
 ```
 A new policy never reopens a REJECTED version or rewrites an evaluation row (both are enforced: terminal state, append-only tables); a re-admission is a new version. Reports now carry `risk_evidence`, `counterfactuals`, `evaluation_config_hash`, stage information and measured `resources` (executed vs reused runs/tokens, input/output tokens where the arm records them). Results: [evaluations/promotion-policy-confirmation-report.md](./evaluations/promotion-policy-confirmation-report.md).
 
+## Production-aligned evaluation (M5.10)
+
+The gate path judges a capability alone; production serves it with a planner fallback. M5.10 records and evaluates both, opt-in. Design: [experiments/production-aligned-evaluation-design.md](./experiments/production-aligned-evaluation-design.md); ADR [0014](./decisions/0014-validated-assets-vs-validated-serving-policies.md).
+
+```
+uv run ee-exp run --mode gated --attribute-phases ...     # record capability/fallback phases, causes, tokens (adds the E1 view)
+uv run ee-exp run ... --approved pool.f12f4fa920@1 ...   # approval can only REMOVE assets from the ACTIVE set
+uv run ee-exp serving-report --set C c.json --set D d.json --out report.md --json-out evals.json
+```
+`serving-report` applies the experimental policy `serving-low-v1` as a counterfactual: separate safety, intrinsic (capability phase alone), serving (final outcome incl. fallback) and economic decisions, three-valued, with task-level exact bounds and a cluster bootstrap. It never promotes or changes a state, and `default-low` / `default-low-v2` are unchanged. Results: [evaluations/production-aligned-learning-evaluation.md](./evaluations/production-aligned-learning-evaluation.md).
+
 ## Known limitations
 
 * Evaluation uses the simulated benchmark. `--seeds` re-runs every task once per seed and `--workers` runs them concurrently; with `ee-bench generate --private --scale N` suites can be made larger (v2 results used x3 and 2 seeds). Repeats of one task are correlated, so the Wilson intervals are optimistic and the sample-size gates (`min_*_n`) count **distinct tasks**. `max_regressions` is an absolute count and gets stricter as runs grow. Real-model results still vary run to run. First multi-seed results: [evaluations/v2-multiseed-evaluation-and-production-run.md](./evaluations/v2-multiseed-evaluation-and-production-run.md).

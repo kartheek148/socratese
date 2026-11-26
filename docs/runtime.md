@@ -124,6 +124,10 @@ With `pool.f12f4fa920` ACTIVE (promoted through the unchanged gates), 48 fresh p
 
 `memory/runtime.select_memory` mirrors capability eligibility for memory: only ACTIVE versions of the arm's memory type from `SqlActiveMemoryCatalog` are considered, in id order; the first whose typed applicability conditions hold and whose exclusions do not is injected (content hash verified first). Otherwise the task runs under general planning and the reason (`no ACTIVE ... memory` / `no applicable ACTIVE ... memory: ...`) is recorded with the exact `id@version` or none. Memory is not wired into the default `ee-run` path yet; it is exercised by `ee-exp --mode gated` (see [evaluation.md](./evaluation.md)).
 
+## Phase attribution (M5.10, opt-in)
+
+With `TaskOrchestrator(attribute_phases=True)` (CLI `ee-exp --attribute-phases`) a run records a `capability_phase` and a `fallback_phase` (outcome, tokens, tool calls, latency, `FallbackCause`) and the capability outcome at the handover (one extra read-only verifier call). Without it, behaviour and results are unchanged. A final success after a fallback is no longer indistinguishable from a capability success. Approval catalogs (`execution/approval.py`) can only remove assets from the ACTIVE set. See [evaluation.md](./evaluation.md).
+
 ## Not in M5 (deferred)
 
 * Live SHADOW/CANARY routing of real tasks (`capabilities/rollout.py` exists; adaptive rollout is M6).
