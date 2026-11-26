@@ -140,6 +140,8 @@ Start with a deterministic policy, then add a contextual bandit after enough log
 
 Selection principle: minimize expected total cost subject to reliability, permission, safety, and risk constraints. Do not collapse all objectives into one opaque reward. Success thresholds and risk ceilings are hard constraints; cost is optimized within the feasible set.
 
+> **Milestone 6 implementation:** the adaptive controller (§4.4/§5.7) is implemented as a pure `controller/` package plus `ee-ctl`: rule baseline and feasibility layer outside the learned policy, tabular success/cost estimator from verified outcomes, prequential calibration, cost-aware and gated-bandit policies, replay and off-policy estimates, and an offline → shadow → canary → active registry with rollback and database-enforced evidence. See [controller.md](./controller.md) and [ADR 0015](./decisions/0015-adaptive-controller-bounded-learning.md).
+
 ### 4.5 Agent runtime and tool gateway
 Support:
 - deterministic capability execution;

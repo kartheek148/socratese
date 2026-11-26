@@ -45,6 +45,16 @@ Model requests/responses, tool arguments/outputs, and verifier results are **nev
 
 Memory artifacts have their own typed tables that mirror the capability tables and the same lifecycle graph: `memories` (immutable identity), `memory_versions` (immutable body + `content_hash` + state), `memory_evaluations`, `memory_transitions`, `memory_observations` (SHADOW/CANARY) and `memory_pointers` (active/previous). Evaluation, transition and observation tables are append-only (trigger); the `ee_memory_version_guard` trigger enforces the legal state graph and that `APPROVED` requires a PASS evaluation, so the rules hold for direct SQL as well. At most one ACTIVE version per memory id. Capability tables are unchanged. The memory body is typed (`domain/memory.py`): type (EPISODIC | CONSOLIDATED | PROCEDURAL), task family, applicability and exclusion conditions (the same typed precondition classes capabilities use), source experience references, provenance and a content hash that is verified on load.
 
+## Adaptive controller (M6, migration 0005)
+
+| Table | Purpose | Key constraints |
+|---|---|---|
+| `controller_policies` | immutable controller policy versions: typed parameters + frozen estimator snapshot (`definition`, `definition_hash`) and lifecycle `state` | unique `(tenant, policy_id, version)`; state ∈ `CANDIDATE/SHADOW/CANARY/ACTIVE/SUPERSEDED/REJECTED/ROLLED_BACK`; partial unique indexes: at most one ACTIVE, one CANARY and one SHADOW version per policy; trigger `ee_controller_policy_guard`: only `state` may change, only along the legal graph, and CANDIDATE→SHADOW / SHADOW→CANARY / CANARY→ACTIVE need a PASS evaluation of OFFLINE / SHADOW / CANARY for exactly this `definition_hash` (SUPERSEDED→ACTIVE is the rollback restore); no deletes |
+| `controller_policy_evaluations` | **append-only** stage evidence: verdict, metrics, reasons, `definition_hash`, `gate_hash` | FK → `controller_policies` |
+| `controller_policy_transitions` | **append-only** lifecycle history (from/to, actor, reason, evaluation id) | FK → versions and evaluations |
+
+`policy_decisions.acted boolean NOT NULL DEFAULT true` (migration 0005): `false` marks a shadow decision that was recorded for evaluation and never executed; existing rows are `true`. The decision's `feature_snapshot` additionally carries the typed `DecisionFeatures` for adaptive policies (key `controller`) and a per-candidate `strategy` in the match snapshot. Run provenance, the verified outcome and the learning-plane join used for training are unchanged (`policy_decisions ⋈ run_outcomes`). Tenant scoping: every table has `tenant_id`; the registry, the decision log and `build_rollout` filter by it.
+
 ## Schema changes in later milestones
 
-Planned per [fit/gap report §5](./milestone-0-fit-gap-report.md): `experience_cases` (M3), `capabilities*`/evaluation/rollout tables (M3–M4), `policy_versions` (M6), `memory_items` (M7), `cost_ledger` (G8). Each ships with its own Alembic revision.
+Planned per [fit/gap report §5](./milestone-0-fit-gap-report.md): `experience_cases` (M3), `capabilities*`/evaluation/rollout tables (M3–M4), `memory_items` (M7), `cost_ledger` (G8). Each ships with its own Alembic revision.

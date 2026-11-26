@@ -124,6 +124,10 @@ With `pool.f12f4fa920` ACTIVE (promoted through the unchanged gates), 48 fresh p
 
 `memory/runtime.select_memory` mirrors capability eligibility for memory: only ACTIVE versions of the arm's memory type from `SqlActiveMemoryCatalog` are considered, in id order; the first whose typed applicability conditions hold and whose exclusions do not is injected (content hash verified first). Otherwise the task runs under general planning and the reason (`no ACTIVE ... memory` / `no applicable ACTIVE ... memory: ...`) is recorded with the exact `id@version` or none. Memory is not wired into the default `ee-run` path yet; it is exercised by `ee-exp --mode gated` (see [evaluation.md](./evaluation.md)).
 
+## Controller selection and shadow (M6)
+
+The acting controller is injected into `TaskOrchestrator`. With `ee-ctl live` it is built from the controller registry (`build_rollout`): the ACTIVE `adaptive/N` policy (else `rule-capability/1`), with the CANARY candidate split in by a stable hash of the task id (learned risk classes only) and the SHADOW candidate attached as `shadow=`. A shadow controller's decision is stored with `acted=false`, never executed, and its failures are isolated (a `controller_shadow` error event). The controller can only select a capability the matcher admitted; the orchestrator still raises if it does not. Details: [controller.md](./controller.md).
+
 ## Phase attribution (M5.10, opt-in)
 
 With `TaskOrchestrator(attribute_phases=True)` (CLI `ee-exp --attribute-phases`) a run records a `capability_phase` and a `fallback_phase` (outcome, tokens, tool calls, latency, `FallbackCause`) and the capability outcome at the handover (one extra read-only verifier call). Without it, behaviour and results are unchanged. A final success after a fallback is no longer indistinguishable from a capability success. Approval catalogs (`execution/approval.py`) can only remove assets from the ACTIVE set. See [evaluation.md](./evaluation.md).

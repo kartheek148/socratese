@@ -142,6 +142,10 @@ uv run ee-exp serving-report --set C c.json --set D d.json --out report.md --jso
 ```
 `serving-report` applies the experimental policy `serving-low-v1` as a counterfactual: separate safety, intrinsic (capability phase alone), serving (final outcome incl. fallback) and economic decisions, three-valued, with task-level exact bounds and a cluster bootstrap. It never promotes or changes a state, and `default-low` / `default-low-v2` are unchanged. Results: [evaluations/production-aligned-learning-evaluation.md](./evaluations/production-aligned-learning-evaluation.md).
 
+## Controller evaluation (M6)
+
+Strategy-selection policies are evaluated separately from assets: prequential full-information replay of recorded paired experiments (`ee-ctl simulate`), live shadow/canary through the controller registry (`ee-ctl live`), with the frozen verdict rule BEATS / EQUAL / WORSE / INCONCLUSIVE (success non-inferiority and tokens-per-verified-success, per-task cluster bootstrap). Exploration cost is reported on every comparison. See [controller.md](./controller.md) and [evaluations/adaptive-controller-report.md](./evaluations/adaptive-controller-report.md). The asset promotion policies (`default-low`, `default-low-v2`, `serving-low-v1`) are unchanged.
+
 ## Known limitations
 
 * Evaluation uses the simulated benchmark. `--seeds` re-runs every task once per seed and `--workers` runs them concurrently; with `ee-bench generate --private --scale N` suites can be made larger (v2 results used x3 and 2 seeds). Repeats of one task are correlated, so the Wilson intervals are optimistic and the sample-size gates (`min_*_n`) count **distinct tasks**. `max_regressions` is an absolute count and gets stricter as runs grow. Real-model results still vary run to run. First multi-seed results: [evaluations/v2-multiseed-evaluation-and-production-run.md](./evaluations/v2-multiseed-evaluation-and-production-run.md).

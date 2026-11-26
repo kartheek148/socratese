@@ -2,9 +2,12 @@
 
 `good` mirrors what the compiler emits for these families (read config, logs and infra, ask the
 bounded decision template, apply, verify). `drifted` is the same procedure with the target key
-frozen to the layout it was derived from, i.e. a capability that has become stale after the
-environment's config layout changed. Both are validated through the normal DSL validator; their
-real quality is *measured*, never assumed, and they are never promoted or registered.
+frozen to a layout that no longer exists, i.e. a capability that has become stale after the
+environment's config layout changed (it was redesigned once after a development run showed that a
+key frozen to a layout that still exists in some variants only produced a variant-dependent mix;
+see docs/experiments/adaptive-controller-design.md §12). Both are validated through the normal
+DSL validator; their real quality is *measured*, never assumed, and they are never promoted or
+registered.
 """
 
 from experience_engine.capabilities.validator import validate_definition
@@ -32,8 +35,9 @@ from experience_engine.domain.capability import (
 )
 
 TOOLS = ["list_files", "read_file", "set_json_value"]
-# the key the capability was originally derived from (first config layout of each family)
-ORIGIN_KEY = {"pool": "database.pool_size", "timeout": "http.timeout_ms"}
+# a key from a retired config layout: absent from every current variant, so the tool reports
+# "key not found", the capability hands over to the planner and has only spent its own tokens
+RETIRED_KEY = {"pool": "database.legacy_pool_size", "timeout": "http.legacy_timeout_ms"}
 VALUE_TYPE = {"pool": OutType.NUMBER, "timeout": OutType.NUMBER}
 
 
@@ -53,7 +57,7 @@ def build(family: str, *, drifted: bool, tag: str) -> CapabilityDefinition:
                 bind=f"{role.value}_text",
             )
         )
-    key_expr = Literal_(literal=ORIGIN_KEY[family]) if drifted else VarRef(var="fix.key")
+    key_expr = Literal_(literal=RETIRED_KEY[family]) if drifted else VarRef(var="fix.key")
     steps += [
         LlmDecision(
             id="decide_fix",
@@ -104,11 +108,7 @@ def build(family: str, *, drifted: bool, tag: str) -> CapabilityDefinition:
         budgets=Budgets(max_steps=12, max_tokens=8000, timeout_ms=60_000),
         known_limitations=[
             "STRESS FIXTURE (hand-authored); "
-            + (
-                "target key frozen to the original layout"
-                if drifted
-                else "compiler-shaped procedure"
-            )
+            + ("target key frozen to a retired layout" if drifted else "compiler-shaped procedure")
         ],
         provenance=Provenance(
             source_run_ids=["stress-fixture"],  # hand-authored: no source run exists
