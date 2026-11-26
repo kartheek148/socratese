@@ -28,3 +28,5 @@ class ControllerDecision(BaseModel):
     selection_probability: float | None
     reason: str
     outcome_status: OutcomeStatus | None = None
+    # False for a shadow decision: recorded for evaluation, never executed (M6)
+    acted: bool = True

@@ -35,6 +35,7 @@ PURE = [
     "evaluation",
     "memory",
     "governance",
+    "controller",
 ]
 ALLOWED_INTERNAL = {
     "domain": {"domain"},
@@ -56,6 +57,9 @@ ALLOWED_INTERNAL = {
     "bench": {"domain", "ports", "execution", "bench"},
     # memory sees only trajectories/definitions: never bench, evaluation or datasets
     "memory": {"domain", "ports", "learning", "capabilities", "memory"},
+    # the adaptive controller sits above execution and uses evaluation statistics; nothing in
+    # execution/evaluation may import it (one-directional layering)
+    "controller": {"domain", "ports", "execution", "evaluation", "controller"},
 }
 
 
