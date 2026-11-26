@@ -211,7 +211,18 @@ def test_canary_gate_pass_fail_inconclusive_and_protected_exposure() -> None:
     v = cand.policy_version
     ctl = "rule-capability/1"
     ok = evaluate_canary(cand, ctl, _canary_rows(v, 300, 240, 300, 240))
-    assert ok.verdict == Verdict.PASS and ok.metrics["control_version"] == ctl
+    assert ok.verdict == Verdict.PASS and ok.metrics["control_version"] is None  # rule control
+    adaptive_ctl = evaluate_canary(
+        cand,
+        "adaptive/1",
+        [
+            r.model_copy(update={"policy_version": "adaptive/1"}) if r.policy_version == ctl else r
+            for r in _canary_rows(v, 300, 240, 300, 240)
+        ],
+        control_adaptive_version="adaptive/1",
+    )
+    assert adaptive_ctl.verdict == Verdict.PASS
+    assert adaptive_ctl.metrics["control_version"] == "adaptive/1"
     harm = evaluate_canary(cand, ctl, _canary_rows(v, 150, 75, 150, 128))
     assert harm.verdict == Verdict.FAIL and "significantly lower" in " ".join(harm.reasons)
     small = evaluate_canary(cand, ctl, _canary_rows(v, 10, 8, 300, 240))

@@ -426,6 +426,24 @@ class SqlDecisionLog:
             if r["run_id"] in by_run
         ]
 
+    def decisions(
+        self,
+        tenant_id: str,
+        policy_version: str,
+        *,
+        acted: bool | None = None,
+        limit: int | None = None,
+    ) -> list[ControllerDecision]:
+        q = sa.select(PD).where(PD.c.tenant_id == tenant_id, PD.c.policy_version == policy_version)
+        if acted is not None:
+            q = q.where(PD.c.acted.is_(acted))
+        q = q.order_by(PD.c.decision_id)
+        if limit is not None:
+            q = q.limit(limit)
+        with self._engine.connect() as conn:
+            rows = conn.execute(q).mappings().all()
+        return [_decision_from_row(r) for r in rows]
+
     def count_trace_events(self, tenant_id: str, component: str, status: str) -> int:
         te = t.trace_events
         with self._engine.connect() as conn:

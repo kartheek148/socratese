@@ -104,4 +104,15 @@ class DecisionLog(Protocol):
         decision's verified outcome."""
         ...
 
+    def decisions(
+        self,
+        tenant_id: str,
+        policy_version: str,
+        *,
+        acted: bool | None = None,
+        limit: int | None = None,
+    ) -> list[ControllerDecision]:
+        """Stored decisions of one policy version, oldest first (for replay checks)."""
+        ...
+
     def count_trace_events(self, tenant_id: str, component: str, status: str) -> int: ...

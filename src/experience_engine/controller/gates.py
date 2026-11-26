@@ -191,15 +191,22 @@ def canary_assignment(task_id: str, fraction: float, salt: str = "canary") -> bo
 
 def evaluate_canary(
     candidate: ControllerPolicyDefinition,
-    active_version: str,
+    control_policy_version: str,
     rows: Sequence[DecisionOutcomeRecord],
     gates: RolloutGates | None = None,
+    *,
+    control_adaptive_version: str | None = None,
 ) -> StageReport:
-    """Concurrent comparison of acted runs by the candidate vs the control (active) controller."""
+    """Concurrent comparison of acted runs by the candidate vs the control controller.
+
+    `control_policy_version` selects the control's rows (e.g. `rule-capability/1`).
+    `control_adaptive_version` is the registered ACTIVE adaptive version the control was, or None
+    when the control was the rule baseline; the registry requires it to equal the version that is
+    ACTIVE at promotion time, so evidence gathered against a stale control cannot be reused."""
     gates = gates or RolloutGates()
     g: CanaryGates = gates.canary
     cand = [r for r in rows if r.acted and r.known and r.policy_version == candidate.policy_version]
-    ctrl = [r for r in rows if r.acted and r.known and r.policy_version == active_version]
+    ctrl = [r for r in rows if r.acted and r.known and r.policy_version == control_policy_version]
     exposure = sum(1 for r in cand if r.risk_level not in candidate.params.learned_risk_levels)
     cs, cn = sum(r.success for r in cand), len(cand)
     ks, kn = sum(r.success for r in ctrl), len(ctrl)
@@ -218,7 +225,7 @@ def evaluate_canary(
         "tokens_per_success_ratio": None if ratio is None else round(ratio, 4),
         "candidate_deviation_rate": round(deviations / cn, 4) if cn else None,
         "protected_exposures": exposure,
-        "control_version": active_version,
+        "control_version": control_adaptive_version,
     }
     fail: list[str] = []
     pending: list[str] = []
