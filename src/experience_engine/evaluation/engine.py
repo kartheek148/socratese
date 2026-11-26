@@ -6,6 +6,8 @@ A fixed baseline, B memory-only hint. Lifecycle cost charges the capability for 
 the control-arm tokens spent evaluating it.
 """
 
+import hashlib
+import json
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -25,17 +27,28 @@ from experience_engine.domain.capability import (
     ToolsAvailable,
 )
 from experience_engine.domain.evaluation import (
+    AnyPolicy,
     Arm,
     ArmMetrics,
+    CounterfactualVerdict,
     EvaluationReport,
     LifecycleCost,
-    PromotionPolicy,
     Suite,
     TaskResult,
+    Verdict,
 )
 from experience_engine.domain.stats import wilson_interval
-from experience_engine.evaluation.arms import CURRENT_SEED, ArmOutcome, ArmRunner
-from experience_engine.evaluation.policy import decide_verdict, pooled, success_lower_bound
+from experience_engine.evaluation.arms import (
+    CURRENT_DATASET,
+    CURRENT_SEED,
+    ArmOutcome,
+    ArmRunner,
+)
+from experience_engine.evaluation.policy import pooled, success_lower_bound
+from experience_engine.evaluation.risk import build_risk_evidence
+from experience_engine.evaluation.risk_policy import decide
+from experience_engine.evaluation.sequential import RunPair, StagePlan, stop_reasons
+from experience_engine.evaluation.validation_cost import resources_from_rows
 from experience_engine.ports.clock import Clock
 
 EVALUATOR_VERSION = "evaluator/1"
@@ -61,7 +74,7 @@ class AssetSubject:
 class EvaluationPlan:
     tenant_id: str
     definition: CapabilityDefinition | AssetSubject
-    policy: PromotionPolicy
+    policy: AnyPolicy
     clock: Clock
     arms: dict[Arm, ArmRunner]
     source_tasks: Sequence[BenchTask]
@@ -79,6 +92,10 @@ class EvaluationPlan:
     learning_wall_ms: int = 0
     max_negative_other_family: int = 4
     results: list[TaskResult] = field(default_factory=list)
+    # M5.9: decisions other policies would take on the same evidence (never acted on), and
+    # optional staged validation with predefined stopping rules (never an early PASS)
+    counterfactual_policies: list[AnyPolicy] = field(default_factory=list)
+    stages: StagePlan | None = None
 
 
 def _metrics(
@@ -147,6 +164,38 @@ def synthetic_negatives(
     return out
 
 
+def _config_hash(plan: EvaluationPlan, seeds: list[int]) -> str:
+    blob = json.dumps(
+        {
+            "policy": plan.policy.policy_hash(),
+            "seeds": seeds,
+            "datasets": {
+                k: {"name": v.name, "version": v.version, "content_hash": v.content_hash}
+                for k, v in sorted(plan.datasets.items())
+            },
+            "model": plan.model_settings,
+            "runtime": RUNTIME_VERSION,
+            "verifier": plan.verifier_version,
+            "environment": ENVIRONMENT_VERSION,
+            "evaluator": EVALUATOR_VERSION,
+            "stages": plan.stages.config() if plan.stages else None,
+            "treatment": plan.treatment.value,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+_SPLIT_OF = {
+    Suite.SOURCE_REPLAY: "DISCOVERY",
+    Suite.HELD_OUT: "VALIDATION",
+    Suite.TRANSFER: "HIDDEN_TRANSFER",
+}
+Job = tuple[Suite, Arm, BenchTask, int]
+
+
 def evaluate(plan: EvaluationPlan) -> EvaluationReport:
     started = plan.clock.now()
     d = (
@@ -168,18 +217,23 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
     }
     seeds = plan.seeds or [0]
     results: dict[tuple[Suite, Arm, str, int], ArmOutcome] = {}
+    outs: dict[tuple[Suite, str], list[ArmOutcome]] = {}
     suites: dict[str, dict[str, ArmMetrics]] = {}
     rows: list[TaskResult] = []
 
-    def run_all(
-        jobs: Sequence[tuple[Suite, Arm, BenchTask, int]],
-    ) -> list[ArmOutcome]:
-        def one(job: tuple[Suite, Arm, BenchTask, int]) -> ArmOutcome:
-            token = CURRENT_SEED.set(job[3])
+    def dataset_hash(suite: Suite) -> str:
+        v = plan.datasets.get(_SPLIT_OF.get(suite, ""))
+        return v.content_hash if v else ""
+
+    def run_all(jobs: Sequence[Job]) -> list[ArmOutcome]:
+        def one(job: Job) -> ArmOutcome:
+            t_seed = CURRENT_SEED.set(job[3])
+            t_data = CURRENT_DATASET.set(dataset_hash(job[0]))
             try:
                 return plan.arms[job[1]](job[2])
             finally:
-                CURRENT_SEED.reset(token)
+                CURRENT_DATASET.reset(t_data)
+                CURRENT_SEED.reset(t_seed)
 
         if plan.workers <= 1:
             return [one(j) for j in jobs]
@@ -188,6 +242,7 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
 
     def record(suite: Suite, arm: Arm, t: BenchTask, o: ArmOutcome, seed: int) -> None:
         results[(suite, arm, t.task.task_id, seed)] = o
+        outs.setdefault((suite, arm.value), []).append(o)
         rows.append(
             TaskResult(
                 suite=suite,
@@ -202,42 +257,114 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
                 applicable=o.applicable,
                 termination=o.termination,
                 seed=seed,
+                cache_hit=o.cache_hit,
+                prompt_tokens=o.prompt_tokens,
+                completion_tokens=o.completion_tokens,
             )
         )
 
-    for suite, tasks in suite_tasks.items():
-        jobs = [(suite, arm, t, sd) for arm in plan.arms for t in tasks for sd in seeds]
-        per_arm: dict[str, list[ArmOutcome]] = {arm.value: [] for arm in plan.arms}
+    def run_suite(suite: Suite, tasks: Sequence[BenchTask], seed_list: Sequence[int]) -> None:
+        jobs = [
+            (suite, arm, t, sd)
+            for arm in plan.arms
+            for t in tasks
+            for sd in seed_list
+            if (suite, arm, t.task.task_id, sd) not in results
+        ]
         for job, o in zip(jobs, run_all(jobs), strict=True):
             record(job[0], job[1], job[2], o, job[3])
-            per_arm[job[1].value].append(o)
+
+    def suite_metrics(suite: Suite) -> None:
+        ran = {k[2] for k in results if k[0] == suite}
+        if not ran and plan.stages is not None:
+            return  # staged and stopped before this suite: nothing to report
         suites[suite.value] = {
-            a: _metrics(o, capability_arm=(a == plan.treatment.value), n_tasks=len(tasks))
-            for a, o in per_arm.items()
+            arm.value: _metrics(
+                outs.get((suite, arm.value), []),
+                capability_arm=(arm == plan.treatment),
+                n_tasks=len(ran),
+            )
+            for arm in plan.arms
         }
 
-    # Negative applicability: the capability must refuse other families and precondition violations.
-    others = list(plan.other_family_tasks)
-    others = [t for t in others if t.family != family][: plan.max_negative_other_family]
-    negatives = others + synthetic_negatives(d, suite_tasks[Suite.HELD_OUT])
-    # refusals are decided before any step runs, so one pass (seed 0) is enough
-    neg_jobs = [(Suite.NEGATIVE, plan.treatment, t, seeds[0]) for t in negatives]
-    neg_outs = run_all(neg_jobs)
-    for job, o in zip(neg_jobs, neg_outs, strict=True):
-        record(job[0], job[1], job[2], o, job[3])
-    suites[Suite.NEGATIVE.value] = {
-        plan.treatment.value: _metrics(neg_outs, True, n_tasks=len(negatives))
-    }
-    # for the negative suite "verified" means a correct refusal
-    refusals = sum(1 for o in neg_outs if o.applicable is False)
-    base_neg = suites[Suite.NEGATIVE.value][plan.treatment.value]
-    suites[Suite.NEGATIVE.value][plan.treatment.value] = base_neg.model_copy(
-        update={
-            "verified": refusals,
-            "rate": refusals / len(neg_outs) if neg_outs else 0.0,
-        }
+    others = [t for t in plan.other_family_tasks if t.family != family]
+    negatives = others[: plan.max_negative_other_family] + synthetic_negatives(
+        d, suite_tasks[Suite.HELD_OUT]
     )
-    false_app = (len(neg_outs) - refusals) / len(neg_outs) if neg_outs else None
+    false_app: float | None = None
+
+    def run_negatives() -> None:
+        # refusals are decided before any step runs, so one pass (seed 0) is enough
+        nonlocal false_app
+        neg_jobs: list[Job] = [(Suite.NEGATIVE, plan.treatment, t, seeds[0]) for t in negatives]
+        neg_outs = run_all(neg_jobs)
+        for job, o in zip(neg_jobs, neg_outs, strict=True):
+            record(job[0], job[1], job[2], o, job[3])
+        # for the negative suite "verified" means a correct refusal
+        refusals = sum(1 for o in neg_outs if o.applicable is False)
+        base_neg = _metrics(neg_outs, True, n_tasks=len(negatives))
+        suites[Suite.NEGATIVE.value] = {
+            plan.treatment.value: base_neg.model_copy(
+                update={
+                    "verified": refusals,
+                    "rate": refusals / len(neg_outs) if neg_outs else 0.0,
+                }
+            )
+        }
+        false_app = (len(neg_outs) - refusals) / len(neg_outs) if neg_outs else None
+
+    def heldout_pairs(task_ids: set[str]) -> list[RunPair]:
+        out: list[RunPair] = []
+        for (suite, arm, tid, sd), o in results.items():
+            if suite != Suite.HELD_OUT or arm != plan.treatment or tid not in task_ids:
+                continue
+            base = results.get((Suite.HELD_OUT, Arm.BASELINE, tid, sd))
+            if base is None or "UNKNOWN" in (base.status, o.status):
+                continue
+            out.append(RunPair(tid, base.verified, o.verified))
+        return out
+
+    early: list[str] = []
+    stage_reached = 4
+    if plan.stages is None:
+        for suite in (Suite.SOURCE_REPLAY, Suite.HELD_OUT, Suite.TRANSFER):
+            run_suite(suite, suite_tasks[suite], seeds)
+        run_negatives()
+    else:
+        st = plan.stages
+        run_negatives()  # stage 1: static, zero tokens
+        stage_reached = 1
+        if false_app:
+            early = [
+                f"stage 1: false applicability {false_app:.0%} on the negative suite "
+                "(zero tolerance)"
+            ]
+        if not early:
+            held = suite_tasks[Suite.HELD_OUT]
+            screen = held[: st.screening_tasks]
+            run_suite(Suite.HELD_OUT, screen, seeds[: st.screening_seeds])
+            stage_reached = 2
+            early = stop_reasons(
+                heldout_pairs({t.task.task_id for t in screen}),
+                alpha=st.alpha_screen,
+                required_success_rate=plan.policy.min_heldout_success_rate,
+                stage=2,
+            )
+        if not early:
+            run_suite(Suite.HELD_OUT, suite_tasks[Suite.HELD_OUT], seeds)
+            stage_reached = 3
+            early = stop_reasons(
+                heldout_pairs({t.task.task_id for t in suite_tasks[Suite.HELD_OUT]}),
+                alpha=st.alpha_heldout,
+                required_success_rate=plan.policy.min_heldout_success_rate,
+                stage=3,
+            )
+        if not early:
+            run_suite(Suite.TRANSFER, suite_tasks[Suite.TRANSFER], seeds)
+            run_suite(Suite.SOURCE_REPLAY, suite_tasks[Suite.SOURCE_REPLAY], seeds)
+            stage_reached = 4
+    for suite in (Suite.SOURCE_REPLAY, Suite.HELD_OUT, Suite.TRANSFER):
+        suite_metrics(suite)
 
     # Regression: tasks the baseline already solves must still be solved by the capability.
     regressions = 0
@@ -271,13 +398,33 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
         baseline_tokens_per_success=(tok_a_all / ok_a) if ok_a else None,
     )
 
-    verdict, reasons = decide_verdict(
-        plan.policy,
-        suites,
-        false_applicability_rate=false_app,
-        regressions=regressions,
-        treatment=plan.treatment,
-    )
+    evidence = build_risk_evidence(rows, plan.treatment.value)
+    counterfactuals: list[CounterfactualVerdict] = []
+    if early:
+        verdict, reasons = Verdict.FAIL, [f"EARLY STOP {r}" for r in early]
+    else:
+        verdict, reasons = decide(
+            plan.policy,
+            suites,
+            false_applicability_rate=false_app,
+            regressions=regressions,
+            evidence=evidence,
+            treatment=plan.treatment,
+        )
+        for other in plan.counterfactual_policies:
+            v, why = decide(
+                other,
+                suites,
+                false_applicability_rate=false_app,
+                regressions=regressions,
+                evidence=evidence,
+                treatment=plan.treatment,
+            )
+            counterfactuals.append(
+                CounterfactualVerdict(
+                    policy_name=other.name, policy_hash=other.policy_hash(), verdict=v, reasons=why
+                )
+            )
     return EvaluationReport(
         capability_id=d.asset_id,
         asset_kind=plan.asset_kind,
@@ -308,4 +455,12 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
         started_at=started,
         completed_at=plan.clock.now(),
         task_results=rows,
+        risk_evidence=evidence,
+        counterfactuals=counterfactuals,
+        evaluation_config_hash=_config_hash(plan, seeds),
+        stage_reached=stage_reached if plan.stages else None,
+        early_stopped=bool(early),
+        resources=resources_from_rows(
+            rows, early_stopped=bool(early), stage_reached=stage_reached if plan.stages else None
+        ),
     )

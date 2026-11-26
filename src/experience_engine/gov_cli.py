@@ -30,10 +30,13 @@ from experience_engine.domain.capability import CapabilityState
 from experience_engine.domain.memory import MemoryDefinition
 from experience_engine.eval_cli import _build_llm
 from experience_engine.evaluation.arms import SharedArm
+from experience_engine.evaluation.baseline_cache import make_baseline_store
 from experience_engine.evaluation.experiment_arms import make_baseline_arm
 from experience_engine.evaluation.memory_eval import evaluate_memory, make_memory_asset_arm
-from experience_engine.evaluation.policy import load_policies
+from experience_engine.evaluation.policy import POLICY_SETS, builtin_policies, load_policies
 from experience_engine.evaluation.report import render_evaluation
+from experience_engine.evaluation.sequential import StagePlan
+from experience_engine.evaluation.validation_cost import format_resources
 from experience_engine.execution.protocol import PROMPT_VERSION
 from experience_engine.governance.memory import MemoryRegistryService
 
@@ -41,13 +44,13 @@ ACTOR = "evaluator:ee-gov"
 
 
 class _Ctx:
-    def __init__(self, policy_file: str | None) -> None:
+    def __init__(self, policy_file: str | None, policy_set: str = "default") -> None:
         infra = InfraSettings.from_env()
         self.engine = make_engine(infra.database_url)
         self.artifacts = LocalFsArtifactStore(infra.artifact_root)
         self.store = SqlMemoryRegistryStore(self.engine)
         self.memories = SqlMemoryStore(self.engine)
-        policies = load_policies(Path(policy_file) if policy_file else None)
+        policies = load_policies(Path(policy_file) if policy_file else None, policy_set)
         self.registry = MemoryRegistryService(self.store, policies, SystemClock(), self.artifacts)
 
 
@@ -86,13 +89,23 @@ def _cmd_evaluate(args: argparse.Namespace, ctx: _Ctx) -> int:
     config = AgentConfig(config_id="M_MEMORY_ASSET", prompt_version=PROMPT_VERSION, model=model)
     discovery, validation = loader.load(Split.DISCOVERY), loader.load(Split.VALIDATION)
     hidden = loader.load(Split.HIDDEN_TRANSFER)
+    store = (
+        make_baseline_store(
+            Path(args.baseline_cache),
+            model_settings=model.model_dump(mode="json"),
+            verifier_version=verifier.version,
+        )
+        if args.baseline_cache
+        else None
+    )
     baseline = SharedArm(
         make_baseline_arm(
             llm=llm,
             config=AgentConfig(config_id="A_BASELINE", prompt_version=PROMPT_VERSION, model=model),
             verifier=verifier,
             clock=clock,
-        )
+        ),
+        store,
     )
     out_dir = Path(args.out_dir) if args.out_dir else None
     if out_dir:
@@ -128,17 +141,33 @@ def _cmd_evaluate(args: argparse.Namespace, ctx: _Ctx) -> int:
             model_settings=model.model_dump(mode="json"),
             seeds=args.seeds,
             workers=args.workers,
+            counterfactual_policies=(
+                [builtin_policies(args.counterfactual_policy_set)[ctx.registry.risk_class(rec)]]
+                if args.counterfactual_policy_set
+                else []
+            ),
+            stages=StagePlan() if args.staged else None,
         )
         state = ctx.registry.complete_evaluation(report, ACTOR)
         print(f"{d.memory_id}@{d.version}: verdict={report.verdict.value} state={state.value}")
         for reason in report.reasons:
             print(f"  - {reason}")
+        for c in report.counterfactuals:
+            print(f"  counterfactual {c.policy_name}: {c.verdict.value} (not acted on)")
+        if report.resources:
+            for line in format_resources(report.resources):
+                print(f"  resources {line}")
         if out_dir:
             (out_dir / f"{d.memory_id}-v{d.version}.md").write_text(render_evaluation(report))
         exit_code = max(exit_code, 1 if report.verdict.value == "FAIL" else 0)
     print(
         f"baseline runs computed={baseline.computed} reused={baseline.served - baseline.computed}"
     )
+    if store is not None:
+        print(
+            f"baseline cache: hits={store.hits} misses={store.misses} puts={store.puts} "
+            f"corrupt={store.corrupt} tokens_avoided={store.tokens_avoided:,}"
+        )
     return exit_code
 
 
@@ -206,6 +235,7 @@ def _cmd_status(args: argparse.Namespace, ctx: _Ctx) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ee-gov")
     parser.add_argument("--policy-file", default=os.environ.get("EE_PROMOTION_POLICY_FILE"))
+    parser.add_argument("--policy-set", choices=POLICY_SETS, default="default")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def tenant(p: argparse.ArgumentParser) -> None:
@@ -220,6 +250,9 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--seeds", type=int, nargs="+", default=[0, 1])
     ev.add_argument("--workers", type=int, default=8)
     ev.add_argument("--out-dir", default=None)
+    ev.add_argument("--baseline-cache", default=None, help="directory of reusable baseline runs")
+    ev.add_argument("--staged", action="store_true", help="predefined sequential stopping rules")
+    ev.add_argument("--counterfactual-policy-set", choices=POLICY_SETS, default=None)
     ev.set_defaults(func=_cmd_evaluate)
 
     ob = sub.add_parser("observe")
@@ -255,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 3
     try:
-        return int(args.func(args, _Ctx(args.policy_file)))
+        return int(args.func(args, _Ctx(args.policy_file, args.policy_set)))
     except (RegistryError, PromotionBlockedError, ValueError, SplitAccessError) as exc:
         print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         return 2

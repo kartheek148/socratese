@@ -89,3 +89,44 @@ def test_gov_evaluate_decides_promote_requires_approval_and_status_lists_version
 def test_gov_refuses_without_evaluator_access(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EE_EVALUATOR_ROLE", raising=False)
     assert gov_cli.main(["status", "--tenant", TENANT]) == 3
+
+
+def test_gov_evaluate_with_candidate_policy_cache_stages_and_counterfactual(
+    env: Env,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    learned(env)
+    private = tmp_path / "private"
+    write_private_dataset(private, seed=424242)
+    monkeypatch.delenv("EE_EVALUATOR_ROLE", raising=False)
+    monkeypatch.setenv("EE_DATABASE_URL", env.engine.url.render_as_string(hide_password=False))
+    monkeypatch.setenv("EE_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    assert learn_cli.main(["build-memory", "--tenant", TENANT]) == 0
+    monkeypatch.setenv("EE_EVALUATOR_ROLE", "evaluator")
+    cache = tmp_path / "baseline-cache"
+
+    def run(asset: str) -> str:
+        capsys.readouterr()
+        code = gov_cli.main(
+            ["--policy-set", "risk-v2", "evaluate", "--tenant", TENANT, "--memory", asset,
+             "--root", str(COMMITTED), "--private-root", str(private), "--llm", "fake",
+             "--seeds", "0", "--workers", "2", "--baseline-cache", str(cache), "--staged",
+             "--counterfactual-policy-set", "default"]
+        )  # fmt: skip
+        assert code in (0, 1)
+        return capsys.readouterr().out
+
+    first = run("mem_consolidated_pool@1")
+    assert "counterfactual default-low:" in first and "(not acted on)" in first
+    assert "baseline cache: hits=0" in first and "resources A_BASELINE:" in first
+    second = run("mem_procedural_pool@1")  # same family, new asset: baseline comes from the cache
+    assert "baseline cache: hits=0" not in second and "misses=0" in second
+    rows = rows_of(env.engine)
+    assert {r[0] for r in rows} == {"default-low-v2"}  # the governing policy was recorded
+
+
+def rows_of(engine: Engine) -> list[tuple]:  # type: ignore[type-arg]
+    with engine.connect() as conn:
+        return [tuple(r) for r in conn.execute(sa.select(t.memory_evaluations.c.policy_name)).all()]

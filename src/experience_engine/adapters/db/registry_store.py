@@ -205,6 +205,20 @@ class SqlAssetRegistryStore[D]:
                         "regressions": report.regressions,
                         "success_lower_bound": report.success_lower_bound,
                         "lifecycle": report.lifecycle.model_dump(mode="json"),
+                        "evaluation_config_hash": report.evaluation_config_hash,
+                        "early_stopped": report.early_stopped,
+                        "stage_reached": report.stage_reached,
+                        "resources": (
+                            report.resources.model_dump(mode="json") if report.resources else None
+                        ),
+                        "risk_evidence": (
+                            report.risk_evidence.model_dump(mode="json")
+                            if report.risk_evidence
+                            else None
+                        ),
+                        "counterfactuals": [
+                            c.model_dump(mode="json") for c in report.counterfactuals
+                        ],
                     },
                     reasons=report.reasons,
                     dataset_versions=report.dataset_versions,

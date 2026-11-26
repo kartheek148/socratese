@@ -46,13 +46,18 @@ from experience_engine.domain.capability import CapabilityState
 from experience_engine.domain.evaluation import Arm
 from experience_engine.domain.experience import PIPELINE_VERSION, Trajectory
 from experience_engine.evaluation.arms import (
+    ArmRunner,
+    SharedArm,
     episodic_hint,
     make_agent_arm,
     make_capability_arm,
 )
+from experience_engine.evaluation.baseline_cache import make_baseline_store
 from experience_engine.evaluation.engine import EvaluationPlan, evaluate
-from experience_engine.evaluation.policy import load_policies
+from experience_engine.evaluation.policy import POLICY_SETS, builtin_policies, load_policies
 from experience_engine.evaluation.report import render_evaluation
+from experience_engine.evaluation.sequential import StagePlan
+from experience_engine.evaluation.validation_cost import format_resources
 from experience_engine.execution.protocol import PROMPT_VERSION
 from experience_engine.ports.decisions import DecisionProvider
 from experience_engine.ports.llm import LLMClient
@@ -109,8 +114,20 @@ def _cmd_evaluate(args: argparse.Namespace, ctx: "_Ctx") -> int:
 
     hint = _episodic_hint_for(ctx, args.tenant, rec.definition.preconditions)
     config = AgentConfig(prompt_version=PROMPT_VERSION, model=model)
-    arms = {
-        Arm.BASELINE: make_agent_arm(llm=llm, config=config, verifier=verifier, clock=clock),
+    baseline: ArmRunner = make_agent_arm(llm=llm, config=config, verifier=verifier, clock=clock)
+    store = (
+        make_baseline_store(
+            Path(args.baseline_cache),
+            model_settings=model.model_dump(mode="json"),
+            verifier_version=verifier.version,
+        )
+        if args.baseline_cache
+        else None
+    )
+    if store is not None:
+        baseline = SharedArm(baseline, store)
+    arms: dict[Arm, ArmRunner] = {
+        Arm.BASELINE: baseline,
         Arm.MEMORY: make_agent_arm(
             llm=llm,
             config=config,
@@ -126,6 +143,13 @@ def _cmd_evaluate(args: argparse.Namespace, ctx: "_Ctx") -> int:
             clock=clock,
         ),
     }
+    if args.skip_memory_control:
+        del arms[Arm.MEMORY]  # the B_MEMORY control feeds no gate; only the overhead figure
+    cf = (
+        [builtin_policies(args.counterfactual_policy_set)[ctx.registry.risk_class(rec)]]
+        if args.counterfactual_policy_set
+        else []
+    )
     tokens, wall = _learning_cost(ctx, args.tenant, rec.definition.provenance.source_run_ids)
     plan = EvaluationPlan(
         tenant_id=args.tenant,
@@ -148,6 +172,8 @@ def _cmd_evaluate(args: argparse.Namespace, ctx: "_Ctx") -> int:
         workers=args.workers,
         learning_tokens=tokens,
         learning_wall_ms=wall,
+        counterfactual_policies=list(cf),
+        stages=StagePlan() if args.staged else None,
     )
     if limit:
         plan.heldout_tasks = plan.heldout_tasks[: limit * 4]
@@ -159,6 +185,13 @@ def _cmd_evaluate(args: argparse.Namespace, ctx: "_Ctx") -> int:
     print(f"verdict={report.verdict.value} state={new_state.value}")
     for reason in report.reasons:
         print(f"  - {reason}")
+    for c in report.counterfactuals:
+        print(f"counterfactual {c.policy_name}: {c.verdict.value} (not acted on)")
+    if report.resources:
+        for line in format_resources(report.resources):
+            print(f"resources {line}")
+    if store is not None:
+        print(f"baseline cache: hits={store.hits} misses={store.misses} puts={store.puts}")
     return 0 if report.verdict.value != "FAIL" else 1
 
 
@@ -248,20 +281,26 @@ def _cmd_status(args: argparse.Namespace, ctx: "_Ctx") -> int:
 
 
 class _Ctx:
-    def __init__(self, policy_file: str | None) -> None:
+    def __init__(self, policy_file: str | None, policy_set: str = "default") -> None:
         infra = InfraSettings.from_env()
         self.engine = make_engine(infra.database_url)
         self.artifacts = LocalFsArtifactStore(infra.artifact_root)
         self.store = SqlRegistryStore(self.engine)
         self.capabilities = SqlCapabilityStore(self.engine)
         self.experience = SqlExperienceStore(self.engine)
-        policies = load_policies(Path(policy_file) if policy_file else None)
+        policies = load_policies(Path(policy_file) if policy_file else None, policy_set)
         self.registry = RegistryService(self.store, policies, SystemClock(), self.artifacts)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ee-eval")
     parser.add_argument("--policy-file", default=os.environ.get("EE_PROMOTION_POLICY_FILE"))
+    parser.add_argument(
+        "--policy-set",
+        choices=POLICY_SETS,
+        default="default",
+        help="built-in promotion policies: default (count-based) or risk-v2 (candidate)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     def common(p: argparse.ArgumentParser, version: bool = True) -> None:
@@ -285,6 +324,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     ev.add_argument("--workers", type=int, default=1, help="concurrent task runs")
     ev.add_argument("--out", default=None)
+    ev.add_argument("--baseline-cache", default=None, help="directory of reusable baseline runs")
+    ev.add_argument("--staged", action="store_true", help="predefined sequential stopping rules")
+    ev.add_argument("--skip-memory-control", action="store_true")
+    ev.add_argument(
+        "--counterfactual-policy-set",
+        choices=POLICY_SETS,
+        default=None,
+        help="also record what this policy set would decide (never acted on)",
+    )
     ev.set_defaults(func=_cmd_evaluate)
 
     ob = sub.add_parser("observe")
@@ -318,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 3
     try:
-        return int(args.func(args, _Ctx(args.policy_file)))
+        return int(args.func(args, _Ctx(args.policy_file, args.policy_set)))
     except (PromotionBlockedError, RegistryError, SplitAccessError, RuntimeError) as exc:
         print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         return 2

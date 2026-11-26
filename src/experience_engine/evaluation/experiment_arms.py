@@ -48,6 +48,8 @@ def _outcome(result: RunResult, **extra: Any) -> ArmOutcome:
         tool_calls=o.tool_calls,
         latency_ms=o.execution_time_ms,
         termination=result.runtime.termination.value,
+        prompt_tokens=result.runtime.prompt_tokens,
+        completion_tokens=result.runtime.completion_tokens,
         **extra,
     )
 

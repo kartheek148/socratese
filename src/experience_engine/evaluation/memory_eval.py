@@ -18,6 +18,7 @@ from experience_engine.domain.memory import MemoryDefinition
 from experience_engine.evaluation.arms import ArmOutcome, ArmRunner
 from experience_engine.evaluation.engine import AssetSubject, EvaluationPlan, evaluate
 from experience_engine.evaluation.experiment_arms import make_memory_arm
+from experience_engine.evaluation.sequential import StagePlan
 from experience_engine.memory.applicability import memory_violations
 from experience_engine.memory.bank import Retrieved
 from experience_engine.memory.builders import estimate_tokens
@@ -88,6 +89,8 @@ def evaluate_memory(
     workers: int = 1,
     learning_tokens: int = 0,
     learning_wall_ms: int = 0,
+    counterfactual_policies: Sequence[PromotionPolicy] = (),
+    stages: StagePlan | None = None,
 ) -> EvaluationReport:
     plan = EvaluationPlan(
         tenant_id=definition.tenant_id,
@@ -113,5 +116,7 @@ def evaluate_memory(
         asset_kind="MEMORY",
         learning_tokens=learning_tokens,
         learning_wall_ms=learning_wall_ms,
+        counterfactual_policies=list(counterfactual_policies),
+        stages=stages,
     )
     return evaluate(plan)

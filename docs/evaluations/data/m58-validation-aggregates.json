@@ -1,0 +1,431 @@
+[
+ {
+  "asset": "pool.f12f4fa920@1",
+  "baseline": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 5
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 4
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 7
+   }
+  },
+  "false_applicability": 0.0,
+  "kind": "CAPABILITY",
+  "recorded_reasons": [
+   "all promotion gates satisfied"
+  ],
+  "recorded_verdict": "PASS",
+  "regression_pairs": 16,
+  "regressions": 0,
+  "seeds": 2,
+  "success_lower_bound": 0.95,
+  "suites": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 36
+   },
+   "NEGATIVE": {
+    "runs": 8,
+    "tasks": null,
+    "verified": 8
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 14
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 36
+   }
+  },
+  "treatment_arm": "C_CAPABILITY"
+ },
+ {
+  "asset": "timeout.e2fb15fa79@1",
+  "baseline": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 17
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 8
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 20
+   }
+  },
+  "false_applicability": 0.0,
+  "kind": "CAPABILITY",
+  "recorded_reasons": [
+   "source replay success 75% < 80% (necessary, not sufficient)",
+   "5 regressions vs baseline > allowed 1"
+  ],
+  "recorded_verdict": "FAIL",
+  "regression_pairs": 45,
+  "regressions": 5,
+  "seeds": 2,
+  "success_lower_bound": 0.75,
+  "suites": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 27
+   },
+   "NEGATIVE": {
+    "runs": 8,
+    "tasks": null,
+    "verified": 8
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 12
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 34
+   }
+  },
+  "treatment_arm": "C_CAPABILITY"
+ },
+ {
+  "asset": "mem_consolidated_pool@1",
+  "baseline": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 6
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 6
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 15
+   }
+  },
+  "false_applicability": 0.0,
+  "kind": "MEMORY",
+  "recorded_reasons": [
+   "3 regressions vs baseline > allowed 1"
+  ],
+  "recorded_verdict": "FAIL",
+  "regression_pairs": 27,
+  "regressions": 3,
+  "seeds": 2,
+  "success_lower_bound": 0.85,
+  "suites": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 34
+   },
+   "NEGATIVE": {
+    "runs": 8,
+    "tasks": null,
+    "verified": 8
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 14
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 33
+   }
+  },
+  "treatment_arm": "M_MEMORY_ASSET"
+ },
+ {
+  "asset": "mem_consolidated_timeout@1",
+  "baseline": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 20
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 10
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 19
+   }
+  },
+  "false_applicability": 0.0,
+  "kind": "MEMORY",
+  "recorded_reasons": [
+   "2 regressions vs baseline > allowed 1"
+  ],
+  "recorded_verdict": "FAIL",
+  "regression_pairs": 49,
+  "regressions": 2,
+  "seeds": 2,
+  "success_lower_bound": 0.87,
+  "suites": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 36
+   },
+   "NEGATIVE": {
+    "runs": 8,
+    "tasks": null,
+    "verified": 8
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 16
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 32
+   }
+  },
+  "treatment_arm": "M_MEMORY_ASSET"
+ },
+ {
+  "asset": "mem_episodic_pool@1",
+  "baseline": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 6
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 6
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 15
+   }
+  },
+  "false_applicability": 0.0,
+  "kind": "MEMORY",
+  "recorded_reasons": [
+   "source replay success 25% < 80% (necessary, not sufficient)",
+   "held-out success 28% < 75%",
+   "transfer success 25% < 75%",
+   "95% lower bound on held-out+transfer success 18% < 50%",
+   "20 regressions vs baseline > allowed 1"
+  ],
+  "recorded_verdict": "FAIL",
+  "regression_pairs": 27,
+  "regressions": 20,
+  "seeds": 2,
+  "success_lower_bound": 0.18,
+  "suites": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 10
+   },
+   "NEGATIVE": {
+    "runs": 8,
+    "tasks": null,
+    "verified": 8
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 4
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 9
+   }
+  },
+  "treatment_arm": "M_MEMORY_ASSET"
+ },
+ {
+  "asset": "mem_episodic_timeout@1",
+  "baseline": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 20
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 10
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 19
+   }
+  },
+  "false_applicability": 0.0,
+  "kind": "MEMORY",
+  "recorded_reasons": [
+   "3 regressions vs baseline > allowed 1"
+  ],
+  "recorded_verdict": "FAIL",
+  "regression_pairs": 49,
+  "regressions": 3,
+  "seeds": 2,
+  "success_lower_bound": 0.72,
+  "suites": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 31
+   },
+   "NEGATIVE": {
+    "runs": 8,
+    "tasks": null,
+    "verified": 8
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 14
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 28
+   }
+  },
+  "treatment_arm": "M_MEMORY_ASSET"
+ },
+ {
+  "asset": "mem_procedural_pool@1",
+  "baseline": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 6
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 6
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 15
+   }
+  },
+  "false_applicability": 0.0,
+  "kind": "MEMORY",
+  "recorded_reasons": [
+   "all promotion gates satisfied"
+  ],
+  "recorded_verdict": "PASS",
+  "regression_pairs": 27,
+  "regressions": 0,
+  "seeds": 2,
+  "success_lower_bound": 0.93,
+  "suites": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 36
+   },
+   "NEGATIVE": {
+    "runs": 8,
+    "tasks": null,
+    "verified": 8
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 14
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 35
+   }
+  },
+  "treatment_arm": "M_MEMORY_ASSET"
+ },
+ {
+  "asset": "mem_procedural_timeout@1",
+  "baseline": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 20
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 10
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 19
+   }
+  },
+  "false_applicability": 0.0,
+  "kind": "MEMORY",
+  "recorded_reasons": [
+   "2 regressions vs baseline > allowed 1"
+  ],
+  "recorded_verdict": "FAIL",
+  "regression_pairs": 49,
+  "regressions": 2,
+  "seeds": 2,
+  "success_lower_bound": 0.95,
+  "suites": {
+   "HELD_OUT": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 36
+   },
+   "NEGATIVE": {
+    "runs": 8,
+    "tasks": null,
+    "verified": 8
+   },
+   "SOURCE_REPLAY": {
+    "runs": 16,
+    "tasks": 8,
+    "verified": 13
+   },
+   "TRANSFER": {
+    "runs": 36,
+    "tasks": 18,
+    "verified": 36
+   }
+  },
+  "treatment_arm": "M_MEMORY_ASSET"
+ }
+]

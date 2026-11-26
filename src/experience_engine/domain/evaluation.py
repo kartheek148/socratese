@@ -101,6 +101,9 @@ class TaskResult(_Frozen):
     applicable: bool | None = None
     termination: str | None = None
     seed: int = 0  # repetition identifier: the same task is re-run once per seed
+    cache_hit: bool = False  # served from a previously computed run (not executed now)
+    prompt_tokens: int | None = None  # split known only for general-planning model calls
+    completion_tokens: int | None = None
 
 
 class LifecycleCost(_Frozen):
@@ -115,6 +118,73 @@ class LifecycleCost(_Frozen):
     baseline_tokens_per_success: float | None
 
 
+class RiskBasedPolicy(PromotionPolicy):
+    """Risk-based criteria (M5.9, `*-v2`). Extends the count-based policy with task-level bounds.
+    The extra fields are *required*: a v1 JSON can never validate as v2 and vice versa, and the
+    v1 `policy_hash()` is unaffected because these fields exist only here. `max_regressions` is
+    kept for schema compatibility and is not read by the risk-based verdict."""
+
+    method: Literal["task-cluster-clopper-pearson/1"]
+    confidence: float = Field(gt=0.5, lt=1)  # one-sided
+    max_regression_rate_ucb: float = Field(ge=0, le=1)  # delta
+    min_regression_tasks: int = Field(ge=1)  # distinct baseline-solved tasks
+    noninferiority_margin: float = Field(ge=0, le=1)
+    max_variant_regression_rate: float = Field(ge=0, le=1)
+    min_variant_pairs: int = Field(ge=1)
+    max_critical_violations: int = Field(ge=0)
+    critical_terminations: tuple[str, ...]
+    bootstrap_resamples: int = Field(ge=1000)
+    bootstrap_seed: int
+
+
+AnyPolicy = RiskBasedPolicy | PromotionPolicy
+
+
+class RiskEvidence(_Frozen):
+    """Task-level evidence a risk-based policy needs, computed from the per-task rows."""
+
+    n_pairs: int  # (suite, task, repetition) pairs where the baseline verified
+    n_regressions: int  # of those, pairs the treatment failed
+    n_dropped_unknown: int  # pairs dropped because either side was UNKNOWN (missing data)
+    regression_tasks: int  # distinct tasks with at least one baseline-solved repetition
+    regression_mass: float  # sum over those tasks of regressed / baseline-solved repetitions
+    improvement_tasks: int  # tasks where the treatment verified more often than the baseline
+    variant_pairs: dict[str, list[int]]  # variant -> [baseline-solved pairs, regressions]
+    paired_diffs: list[float]  # per task (held-out + transfer): treatment rate - baseline rate
+    source_tasks: int
+    source_mass: float  # sum over source tasks of the treatment success fraction
+    termination_counts: dict[str, int]  # treatment terminations over all runs
+
+
+class CounterfactualVerdict(_Frozen):
+    """What another policy would have decided on the same evidence. Never acted on."""
+
+    policy_name: str
+    policy_hash: str
+    verdict: Verdict
+    reasons: list[str]
+
+
+class ArmResources(_Frozen):
+    runs_executed: int = 0
+    runs_cached: int = 0
+    tokens_executed: int = 0
+    tokens_cached: int = 0  # as recorded when the run was first computed
+    prompt_tokens: int = 0  # over executed runs whose split is known
+    completion_tokens: int = 0
+    runs_with_split: int = 0
+    tool_calls_executed: int = 0
+    latency_ms_executed: int = 0
+
+
+class ValidationResources(_Frozen):
+    """Measured cost of one evaluation, from its per-task rows (never extrapolated)."""
+
+    by_arm: dict[str, ArmResources]
+    early_stopped: bool = False
+    stage_reached: int | None = None
+
+
 class EvaluationReport(_Frozen):
     capability_id: str  # the asset id: a capability id or, for memory, a memory id
     asset_kind: str = "CAPABILITY"
@@ -124,7 +194,7 @@ class EvaluationReport(_Frozen):
     risk_class: Literal["low", "medium", "high"]
     policy_name: str
     policy_hash: str
-    policy: PromotionPolicy
+    policy: AnyPolicy
     verdict: Verdict
     reasons: list[str]
     suites: dict[str, dict[str, ArmMetrics]]  # suite -> arm -> metrics
@@ -142,6 +212,13 @@ class EvaluationReport(_Frozen):
     started_at: UtcDatetime
     completed_at: UtcDatetime
     task_results: list[TaskResult] = Field(default_factory=list)
+    # M5.9 (all optional so every earlier report still loads)
+    risk_evidence: RiskEvidence | None = None
+    counterfactuals: list[CounterfactualVerdict] = Field(default_factory=list)
+    evaluation_config_hash: str | None = None
+    stage_reached: int | None = None
+    early_stopped: bool = False
+    resources: ValidationResources | None = None
 
     def n_in(self, suite: Suite) -> int:
         arms = self.suites.get(suite.value, {})
@@ -213,3 +290,34 @@ def default_policies() -> dict[str, PromotionPolicy]:
             canary_fraction=0.05,
         ),
     }
+
+
+def default_policies_v2() -> dict[str, RiskBasedPolicy]:
+    """Candidate risk-based criteria (`*-v2`), frozen by the M5.9 design document.
+    Success, lower-bound, false-applicability, sample-size, token-ratio and rollout fields equal
+    the v1 values of the same risk class; only the regression and source-replay tests differ."""
+    v1 = default_policies()
+    common = {
+        "method": "task-cluster-clopper-pearson/1",
+        "max_critical_violations": 0,
+        "critical_terminations": ("TOOL_NOT_ALLOWED",),
+        "bootstrap_resamples": 10_000,
+        "bootstrap_seed": 20260101,
+        "min_variant_pairs": 6,
+        "max_regressions": 1_000_000,  # superseded by max_regression_rate_ucb
+    }
+    spec = {
+        "low": dict(confidence=0.95, max_regression_rate_ucb=0.20, min_regression_tasks=8,
+                    noninferiority_margin=0.05, max_variant_regression_rate=0.5),
+        "medium": dict(confidence=0.95, max_regression_rate_ucb=0.10, min_regression_tasks=15,
+                       noninferiority_margin=0.02, max_variant_regression_rate=0.3),
+        "high": dict(confidence=0.975, max_regression_rate_ucb=0.05, min_regression_tasks=30,
+                     noninferiority_margin=0.0, max_variant_regression_rate=0.15),
+    }  # fmt: skip
+    out: dict[str, RiskBasedPolicy] = {}
+    for risk, base in v1.items():
+        data = {**base.model_dump(), **common, **spec[risk]}
+        data["name"] = f"{base.name}-v2"
+        data["version"] = 2
+        out[risk] = RiskBasedPolicy.model_validate(data)
+    return out

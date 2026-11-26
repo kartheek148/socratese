@@ -487,6 +487,8 @@ class TaskOrchestrator:
             termination=fallback.termination,
             steps=steps,
             tokens_used=spent.tokens_used + fallback.tokens_used,
+            prompt_tokens=spent.prompt_tokens + fallback.prompt_tokens,
+            completion_tokens=spent.completion_tokens + fallback.completion_tokens,
             tool_calls=spent.tool_calls + fallback.tool_calls,
             human_interventions=fallback.human_interventions,
             agent_claimed_done=fallback.agent_claimed_done,

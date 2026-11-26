@@ -32,6 +32,8 @@ class RuntimeResult:
     termination: TerminationReason
     steps: list[StepRecord] = field(default_factory=list)
     tokens_used: int = 0
+    prompt_tokens: int = 0  # split known only for general-planning model calls
+    completion_tokens: int = 0
     tool_calls: int = 0
     human_interventions: int = 0
     agent_claimed_done: bool = False
@@ -109,6 +111,8 @@ class AgentRuntime:
             llm_steps += 1
             used = response.prompt_tokens + response.completion_tokens
             result.tokens_used += used
+            result.prompt_tokens += response.prompt_tokens
+            result.completion_tokens += response.completion_tokens
             model_event = self._emit(
                 EmitSpec(
                     type=TraceEventType.MODEL_CALL,

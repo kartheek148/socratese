@@ -6,7 +6,8 @@ the same independent verifier from final environment state, never from their own
 import threading
 from collections.abc import Callable
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from experience_engine.bench.dataset import BenchTask
 from experience_engine.bench.environment import SimulatedEnvironment
@@ -26,6 +27,9 @@ from experience_engine.ports.clock import Clock
 from experience_engine.ports.decisions import DecisionProvider
 from experience_engine.ports.llm import ChatMessage, LLMClient, LLMRequest, LLMResponse
 from experience_engine.ports.verifier import OutcomeVerifier
+
+if TYPE_CHECKING:
+    from experience_engine.evaluation.baseline_cache import BaselineStore
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,10 @@ class ArmOutcome:
     asset_ref: str | None = None
     asset_family: str | None = None
     fallback_reason: str | None = None
+    # resource accounting (M5.9)
+    cache_hit: bool = False  # served from a recorded run, not executed now
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 ArmRunner = Callable[[BenchTask], ArmOutcome]
@@ -55,17 +63,22 @@ ArmRunner = Callable[[BenchTask], ArmOutcome]
 # The repetition (seed) currently being executed. The engine sets it around every runner call so
 # wrappers such as `SharedArm` can tell repetitions of one task apart without changing ArmRunner.
 CURRENT_SEED: ContextVar[int] = ContextVar("evaluation_seed", default=0)
+# Content hash of the dataset the task being run belongs to (part of the baseline cache key).
+CURRENT_DATASET: ContextVar[str] = ContextVar("evaluation_dataset", default="")
 
 
 class SharedArm:
     """Computes each (task, repetition) once and serves it to every evaluation that asks.
 
     Used for the control arm when several assets are evaluated in one session: they are then
-    compared against the *same* baseline draws (paired), at the cost of one baseline run.
+    compared against the *same* baseline draws (paired), at the cost of one baseline run. With a
+    `store` the draws also persist across sessions (see baseline_cache). Reuse is flagged
+    (`cache_hit`) so reports can separate executed runs from reused ones.
     """
 
-    def __init__(self, inner: ArmRunner):
+    def __init__(self, inner: ArmRunner, store: "BaselineStore | None" = None):
         self._inner = inner
+        self._store = store
         self._guard = threading.Lock()
         self._locks: dict[tuple[str, int], threading.Lock] = {}
         self._done: dict[tuple[str, int], ArmOutcome] = {}
@@ -73,15 +86,26 @@ class SharedArm:
         self.served = 0
 
     def __call__(self, bench: BenchTask) -> ArmOutcome:
-        key = (bench.task.task_id, CURRENT_SEED.get())
+        seed = CURRENT_SEED.get()
+        key = (bench.task.task_id, seed)
         with self._guard:
             lock = self._locks.setdefault(key, threading.Lock())
         with lock:
-            if key not in self._done:
-                self._done[key] = self._inner(bench)
-                self.computed += 1
             self.served += 1
-            return self._done[key]
+            if key in self._done:
+                return replace(self._done[key], cache_hit=True)
+            disk_key = self._store.key(bench, seed, CURRENT_DATASET.get()) if self._store else None
+            if self._store is not None and disk_key is not None:
+                cached = self._store.get(disk_key)
+                if cached is not None:
+                    self._done[key] = cached
+                    return replace(cached, cache_hit=True)
+            outcome = self._inner(bench)
+            self._done[key] = outcome
+            self.computed += 1
+            if self._store is not None and disk_key is not None:
+                self._store.put(disk_key, outcome)
+            return outcome
 
 
 class HintedLLM:
@@ -134,6 +158,8 @@ def make_agent_arm(
             tool_calls=o.tool_calls,
             latency_ms=o.execution_time_ms,
             termination=result.runtime.termination.value,
+            prompt_tokens=result.runtime.prompt_tokens,
+            completion_tokens=result.runtime.completion_tokens,
         )
 
     return run

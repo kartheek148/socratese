@@ -9,26 +9,43 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+from pydantic import TypeAdapter
+
 from experience_engine.domain.evaluation import (
+    AnyPolicy,
     Arm,
     ArmMetrics,
     PromotionPolicy,
     Suite,
     Verdict,
     default_policies,
+    default_policies_v2,
 )
 from experience_engine.domain.stats import wilson_interval
 
 Suites = Mapping[str, Mapping[str, ArmMetrics]]
 
 
-def load_policies(path: Path | None) -> dict[str, PromotionPolicy]:
-    """Policies from a reviewed JSON file ({"low": {...}, "medium": {...}, "high": {...}}), or the
-    built-in defaults. All three risk classes must be defined so none silently falls back."""
-    if path is None:
+POLICY_SETS = ("default", "risk-v2")
+
+
+def builtin_policies(policy_set: str = "default") -> dict[str, PromotionPolicy]:
+    """Built-in policies by set name: `default` (count-based) or `risk-v2` (candidate)."""
+    if policy_set == "default":
         return default_policies()
+    if policy_set == "risk-v2":
+        return dict(default_policies_v2())
+    raise ValueError(f"unknown policy set {policy_set!r}; choose from {POLICY_SETS}")
+
+
+def load_policies(path: Path | None, policy_set: str = "default") -> dict[str, PromotionPolicy]:
+    """Policies from a reviewed JSON file ({"low": {...}, "medium": {...}, "high": {...}}), or the
+    built-in set. All three risk classes must be defined so none silently falls back."""
+    if path is None:
+        return builtin_policies(policy_set)
     raw = json.loads(path.read_text())
-    policies = {k: PromotionPolicy.model_validate(v) for k, v in raw.items()}
+    adapter: TypeAdapter[AnyPolicy] = TypeAdapter(AnyPolicy)
+    policies: dict[str, PromotionPolicy] = {k: adapter.validate_python(v) for k, v in raw.items()}
     missing = {"low", "medium", "high"} - set(policies)
     if missing:
         raise ValueError(f"policy file must define all risk classes; missing {sorted(missing)}")
@@ -56,6 +73,24 @@ def pooled(suites: Suites, arm: Arm, names: tuple[Suite, ...]) -> tuple[int, int
 def success_lower_bound(suites: Suites, treatment: Arm = Arm.CAPABILITY) -> float | None:
     n, ok, _, _ = pooled(suites, treatment, (Suite.HELD_OUT, Suite.TRANSFER))
     return wilson_interval(ok, n)[0] if n else None
+
+
+def token_ratio_failure(
+    policy: PromotionPolicy, suites: Suites, treatment: Arm = Arm.CAPABILITY
+) -> str | None:
+    """Execution tokens per verified success vs baseline, when the policy gates it."""
+    if policy.max_exec_token_ratio is None:
+        return None
+    _, ok_c, tok_c, _ = pooled(suites, treatment, (Suite.HELD_OUT, Suite.TRANSFER))
+    _, ok_a, tok_a, _ = pooled(suites, Arm.BASELINE, (Suite.HELD_OUT, Suite.TRANSFER))
+    if ok_c and ok_a and tok_a:
+        ratio = (tok_c / ok_c) / (tok_a / ok_a)
+        if ratio > policy.max_exec_token_ratio:
+            return (
+                f"execution tokens per success are {ratio:.2f}x baseline "
+                f"> {policy.max_exec_token_ratio}x"
+            )
+    return None
 
 
 def decide_verdict(
@@ -114,16 +149,9 @@ def decide_verdict(
         )
     if regressions > policy.max_regressions:
         failures.append(f"{regressions} regressions vs baseline > allowed {policy.max_regressions}")
-    if policy.max_exec_token_ratio is not None:
-        _, ok_c, tok_c, _ = pooled(suites, treatment, (Suite.HELD_OUT, Suite.TRANSFER))
-        _, ok_a, tok_a, _ = pooled(suites, Arm.BASELINE, (Suite.HELD_OUT, Suite.TRANSFER))
-        if ok_c and ok_a and tok_a:
-            ratio = (tok_c / ok_c) / (tok_a / ok_a)
-            if ratio > policy.max_exec_token_ratio:
-                failures.append(
-                    f"execution tokens per success are {ratio:.2f}x baseline "
-                    f"> {policy.max_exec_token_ratio}x"
-                )
+    token_failure = token_ratio_failure(policy, suites, treatment)
+    if token_failure:
+        failures.append(token_failure)
     return (
         (Verdict.FAIL, failures) if failures else (Verdict.PASS, ["all promotion gates satisfied"])
     )
