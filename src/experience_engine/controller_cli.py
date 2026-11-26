@@ -265,7 +265,14 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
             cfg = SimConfig(
                 ControllerKind(kind.upper()), _params(ns), refresh_every=args.refresh_every
             )
-            cmp, _ = evaluate(tasks, cfg, n_orders=args.orders, seed=args.seed, warm=warm)
+            cmp, _ = evaluate(
+                tasks,
+                cfg,
+                n_orders=args.orders,
+                seed=args.seed,
+                warm=warm,
+                horizon=args.horizon or None,
+            )
             entries.append(SimEntry(kind, cfg, cmp))
         cov = None
         if entries:
@@ -538,6 +545,12 @@ def main(argv: list[str] | None = None) -> int:
     sm.add_argument("--orders", type=int, default=20)
     sm.add_argument("--seed", type=int, default=20260601)
     sm.add_argument("--refresh-every", type=int, default=10)
+    sm.add_argument(
+        "--horizon",
+        type=int,
+        default=0,
+        help="exploratory: streams of N tasks resampled with replacement from the recorded table",
+    )
     sm.add_argument("--protected-share", type=float, default=0.0)
     sm.add_argument("--title", default="Adaptive controller: prequential replay (generated)")
     sm.add_argument("--preamble", default="")

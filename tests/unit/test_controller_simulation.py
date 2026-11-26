@@ -39,6 +39,13 @@ def test_orders_are_seeded_permutations() -> None:
     assert a == b and all(sorted(o) == list(range(50)) for o in a) and a[0] != a[1]
 
 
+def test_horizon_streams_resample_with_replacement_and_are_seeded() -> None:
+    a = make_orders(20, 2, seed=3, horizon=500)
+    assert a == make_orders(20, 2, seed=3, horizon=500) and a[0] != a[1]
+    assert all(len(o) == 500 and set(o) <= set(range(20)) for o in a)
+    assert len(set(a[0])) == 20  # every task is drawn at least once at this horizon
+
+
 def test_verdict_rule_is_the_amended_frozen_one() -> None:
     ok, cheap, same = (0.0, -0.02, 0.02), (0.9, 0.8, 0.97), (1.0, 0.99, 1.0)
     assert decide_verdict(ok, cheap) == Verdict.BEATS

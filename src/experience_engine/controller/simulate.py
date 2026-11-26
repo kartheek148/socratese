@@ -91,12 +91,21 @@ class SimStep:
         return self.mode == MODE_EXPLORE
 
 
-def make_orders(n_tasks: int, n_orders: int, seed: int) -> list[list[int]]:
+def make_orders(
+    n_tasks: int, n_orders: int, seed: int, horizon: int | None = None
+) -> list[list[int]]:
+    """Seeded task orders. Default: each order is a permutation (every task once). With
+    `horizon`, each order is a stream of that length drawn with replacement from the recorded
+    tasks (a model-based extrapolation: a repeated draw re-uses the recorded outcome)."""
     orders = []
     for i in range(n_orders):
-        order = list(range(n_tasks))
-        random.Random(seed * 1_000_003 + i).shuffle(order)
-        orders.append(order)
+        rng = random.Random(seed * 1_000_003 + i)
+        if horizon:
+            orders.append([rng.randrange(n_tasks) for _ in range(horizon)])
+        else:
+            order = list(range(n_tasks))
+            rng.shuffle(order)
+            orders.append(order)
     return orders
 
 
@@ -337,9 +346,10 @@ def evaluate(
     n_orders: int = 20,
     seed: int = 20260601,
     warm: Sequence[DecisionOutcomeRecord] = (),
+    horizon: int | None = None,
 ) -> tuple[Comparison, list[list[SimStep]]]:
     runs = [
         run_sequence(tasks, order, cfg, warm, label=f"o{k}")
-        for k, order in enumerate(make_orders(len(tasks), n_orders, seed))
+        for k, order in enumerate(make_orders(len(tasks), n_orders, seed, horizon))
     ]
     return compare(runs), runs
