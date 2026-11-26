@@ -90,9 +90,15 @@ def test_policy_reaches_active_only_through_evidence_and_can_be_rolled_back(
     out = cli.live("--canary-fraction", "0.5")
     assert "canary=adaptive/1" in out and "adaptive/1: n=" in out
     code, out = cli("evaluate", "canary", "--version", "1")
-    assert code == 0 and '"verdict": "PASS"' in json.dumps(json.loads(out)) or "PASS" in out, out
+    report = json.loads(out)
+    assert code == 0 and report["verdict"] == "PASS", out
+    # concurrent control only: earlier rule-baseline traffic must not be in the control arm
+    m = report["metrics"]
+    assert m["n_candidate"] + m["n_control"] == 120 and 30 <= m["n_control"] <= 90
     assert cli("promote", "--version", "1", "--to", "active")[0] == 0
     assert states(engine) == {1: "ACTIVE"}
+    # canary evidence computed after the promotion would use the candidate as its own control
+    assert cli("evaluate", "canary", "--version", "1")[0] == 2
 
     out = cli.live()
     assert "active=adaptive/1" in out and "adaptive/1: n=120" in out

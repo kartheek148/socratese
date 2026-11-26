@@ -23,7 +23,6 @@ class SimSet:
     note: str
     tasks: Sequence[TaskOutcome]
     entries: Sequence[SimEntry]
-    coverage_rule_only: float | None = None
 
 
 def _pct(x: float | None) -> str:
@@ -96,11 +95,4 @@ def render_sim_report(sets: Sequence[SimSet], title: str, preamble: str = "") ->
             for fam, (ca, ba, dev) in e.comparison.by_family.items():
                 out.append(f"| {e.kind} | {fam} | {_arm(ca)} | {_arm(ba)} | {dev:.1%} |")
         out.append("")
-        if s.coverage_rule_only is not None:
-            out += [
-                f"Off-policy coverage of a rule-only production log for the candidate's choices: "
-                f"{s.coverage_rule_only:.1%} (0% means a log written by the rule baseline contains no "
-                "counterfactual evidence about any deviation).",
-                "",
-            ]
     return "\n".join(out) + "\n"

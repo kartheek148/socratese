@@ -199,6 +199,11 @@ def evaluate_canary(
 ) -> StageReport:
     """Concurrent comparison of acted runs by the candidate vs the control controller.
 
+    `rows` must come from the canary window only (decisions made while the candidate was in
+    CANARY): the caller filters by time. The control arm is further restricted to the risk classes
+    the candidate may serve, so both arms are drawn from the same population (protected tasks are
+    only ever served by the control and must not dilute the comparison).
+
     `control_policy_version` selects the control's rows (e.g. `rule-capability/1`).
     `control_adaptive_version` is the registered ACTIVE adaptive version the control was, or None
     when the control was the rule baseline; the registry requires it to equal the version that is
@@ -206,7 +211,15 @@ def evaluate_canary(
     gates = gates or RolloutGates()
     g: CanaryGates = gates.canary
     cand = [r for r in rows if r.acted and r.known and r.policy_version == candidate.policy_version]
-    ctrl = [r for r in rows if r.acted and r.known and r.policy_version == control_policy_version]
+    learned = set(candidate.params.learned_risk_levels)
+    ctrl = [
+        r
+        for r in rows
+        if r.acted
+        and r.known
+        and r.policy_version == control_policy_version
+        and r.risk_level in learned
+    ]
     exposure = sum(1 for r in cand if r.risk_level not in candidate.params.learned_risk_levels)
     cs, cn = sum(r.success for r in cand), len(cand)
     ks, kn = sum(r.success for r in ctrl), len(ctrl)

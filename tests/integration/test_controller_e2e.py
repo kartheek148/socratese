@@ -423,3 +423,19 @@ def test_offline_and_shadow_evidence_flow_from_the_database_log(
     )
     assert rep.metrics["n_decisions"] == 6 and rep.metrics["agreement"] == 1.0
     assert rep.verdict == Verdict.INCONCLUSIVE and cap in {r.action for r in recs}
+
+
+def test_decision_log_since_filters_to_a_window_and_canary_uses_it(
+    engine: Engine, tmp_path: Path
+) -> None:
+    """Regression (found in the live S4 run): the canary comparison must only see decisions made
+    while the candidate was in CANARY, never earlier traffic of the control."""
+    run_tasks(engine, tmp_path, RuleCapabilityPolicy(), pool_tasks(4))
+    with engine.connect() as conn:
+        cut = conn.execute(sa.select(sa.func.now())).scalar_one()
+    run_tasks(engine, tmp_path, RuleCapabilityPolicy(), pool_tasks(3))
+    log = SqlDecisionLog(engine)
+    assert len(log.outcome_records(TENANT)) == 7
+    window = log.outcome_records(TENANT, since=cut)
+    assert len(window) == 3
+    assert len(log.outcome_records(TENANT, policy_versions=["rule-capability/1"], since=cut)) == 3

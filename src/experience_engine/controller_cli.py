@@ -42,7 +42,7 @@ from experience_engine.controller.gates import (
     evaluate_shadow,
 )
 from experience_engine.controller.registry import ControllerPolicyRegistry, ControllerRegistryError
-from experience_engine.controller.replay import off_policy_estimate, replay_decision
+from experience_engine.controller.replay import replay_decision
 from experience_engine.controller.report import SimEntry, SimSet, render_sim_report
 from experience_engine.controller.rollout import build_rollout
 from experience_engine.controller.simulate import SimConfig, evaluate, rule_log
@@ -145,6 +145,12 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
         errors = log.count_trace_events(args.tenant, "controller_shadow", "error")
         report = evaluate_shadow(d, pairs, errors, reg.gates)
     else:
+        if rec.state != PolicyState.CANARY:
+            print(
+                f"canary evidence is only valid while the version is in CANARY (it is {rec.state.value})",
+                file=sys.stderr,
+            )
+            return 2
         active = next(
             (
                 r
@@ -154,7 +160,21 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
             None,
         )
         control = active.definition.policy_version if active else RULE_VERSION
-        rows = log.outcome_records(args.tenant, policy_versions=[d.policy_version, control])
+        started = max(
+            (
+                h.created_at
+                for h in store.history(args.tenant, args.policy_id)
+                if h.version == args.version and h.to_state == PolicyState.CANARY
+            ),
+            default=None,
+        )
+        if started is None:
+            print("the candidate has not been in CANARY: no concurrent window", file=sys.stderr)
+            return 2
+        # concurrent control only: decisions made while this version was in CANARY
+        rows = log.outcome_records(
+            args.tenant, policy_versions=[d.policy_version, control], since=started
+        )
         report = evaluate_canary(
             d,
             control,
@@ -274,16 +294,6 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
                 horizon=args.horizon or None,
             )
             entries.append(SimEntry(kind, cfg, cmp))
-        cov = None
-        if entries:
-            h = ControllerPolicyDefinition(
-                policy_id="sim",
-                version=1,
-                kind=ControllerKind.COST_AWARE,
-                params=_params(argparse.Namespace(**{**vars(args), "kind": "cost_aware"})),
-                snapshot=build_snapshot(rule_log(tasks), "bench"),
-            )
-            cov = off_policy_estimate(rule_log(tasks), h, h.snapshot).coverage
         sets.append(
             SimSet(
                 name,
@@ -292,7 +302,6 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
                 f"{env.n_without_capability} without an eligible capability.",
                 tasks,
                 entries,
-                cov,
             )
         )
     text = render_sim_report(sets, args.title, args.preamble or "")

@@ -1,6 +1,7 @@
 """M6 unit tests: stage gates, canary routing, rollout wiring and the policy registry."""
 
 import dataclasses
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -235,7 +236,38 @@ def test_canary_gate_pass_fail_inconclusive_and_protected_exposure() -> None:
     assert evaluate_canary(cand, ctl, exposed).verdict == Verdict.FAIL
 
 
+def test_canary_control_is_restricted_to_the_candidates_population() -> None:
+    """Regression (found in the live S4 run): protected tasks are only ever served by the control
+    and must not dilute the comparison; the arms must come from the same risk classes."""
+    cand = calibrated_candidate(version=2)
+    v, ctl = cand.policy_version, "rule-capability/1"
+    rows = _canary_rows(v, 60, 45, 60, 45)
+    protected_failures = [
+        record(50_000 + i, CAP_KEY, False, 3000, risk="high").model_copy(
+            update={"policy_version": ctl}
+        )
+        for i in range(200)
+    ]
+    rep = evaluate_canary(cand, ctl, rows + protected_failures)
+    assert rep.metrics["n_control"] == 60 and rep.metrics["success_control"] == 0.75
+    assert rep.metrics["protected_exposures"] == 0
+
+
 # ---- registry -----------------------------------------------------------------------------------
+class TickClock:
+    """Strictly increasing clock: evidence and transition times must be ordered."""
+
+    def __init__(self) -> None:
+        self.n = 0
+
+    def now(self) -> datetime:
+        self.n += 1
+        return datetime(2025, 1, 1, tzinfo=UTC) + timedelta(seconds=self.n)
+
+    def monotonic_ms(self) -> int:
+        return 0
+
+
 class Rig:
     def __init__(self) -> None:
         self.store = MemoryPolicyStore()
@@ -345,6 +377,28 @@ def test_full_lifecycle_supersession_and_rollback_restore() -> None:
         r.reg.rollback(d2.tenant_id, d2.policy_id, 2, "ops", "again")  # terminal
     with pytest.raises(IllegalPolicyTransitionError):
         r.promote(d2, S.SHADOW)
+
+
+def test_canary_evidence_must_not_predate_the_canary_period() -> None:
+    """Regression (found in the live S4 run): evidence computed before the candidate entered
+    CANARY is not a concurrent comparison and cannot promote it."""
+    from experience_engine.ports.controller_store import PolicyTransition
+
+    r = Rig()
+    r.reg = ControllerPolicyRegistry(r.store, TickClock(), r.gates)
+    d = calibrated_candidate(1)
+    r.reg.register(d)
+    r.evidence(d, Stage.OFFLINE)
+    r.promote(d, S.SHADOW)
+    r.evidence(d, Stage.SHADOW)
+    r.evidence(d, Stage.CANARY, control=None)  # recorded BEFORE the canary starts
+    r.promote(d, S.CANARY)
+    with pytest.raises(PromotionBlockedError, match="predates the canary period"):
+        r.promote(d, S.ACTIVE)
+    r.evidence(d, Stage.CANARY, control=None)  # recorded during the canary
+    r.promote(d, S.ACTIVE)
+    assert r.state(d) == S.ACTIVE
+    assert PolicyTransition  # imported for clarity of the contract under test
 
 
 def test_one_shadow_and_one_canary_at_a_time_and_reject_is_terminal() -> None:

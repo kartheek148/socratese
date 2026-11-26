@@ -1,0 +1,20 @@
+{
+ "stage": "CANARY",
+ "verdict": "PASS",
+ "policy_version": "adaptive/1",
+ "definition_hash": "fbaaa6fae9a861e71b13403bdee13829108e3edd0a746fc1d5a903dd67b46a4b",
+ "gate_hash": "f49901ff1223573d6549597a0070e64e24e4d187bb4326271fd66ec805098383",
+ "metrics": {
+  "n_candidate": 60,
+  "n_control": 60,
+  "success_candidate": 0.75,
+  "success_control": 0.6833,
+  "diff_lower": -0.0683,
+  "diff_upper": 0.1984,
+  "tokens_per_success_ratio": 0.8206,
+  "candidate_deviation_rate": 0.0167,
+  "protected_exposures": 0,
+  "control_version": null
+ },
+ "reasons": []
+}

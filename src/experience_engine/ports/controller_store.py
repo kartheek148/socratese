@@ -92,6 +92,7 @@ class DecisionLog(Protocol):
         tenant_id: str,
         *,
         policy_versions: Sequence[str] | None = None,
+        since: datetime | None = None,
         limit: int | None = None,
     ) -> list[DecisionOutcomeRecord]:
         """Acted and shadow decisions joined with verified outcomes, oldest first."""

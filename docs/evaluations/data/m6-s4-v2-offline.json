@@ -1,0 +1,22 @@
+{
+ "stage": "OFFLINE",
+ "verdict": "PASS",
+ "policy_version": "adaptive/2",
+ "definition_hash": "f680149de29fe2b13c1fd84eb0e33f4c8f166b53b3afc43090e0a30ab5e94f93",
+ "gate_hash": "464bff63a731747fc1281f106c6f49f632a62bb9b59f1133be548e2de96c4266",
+ "metrics": {
+  "n_decisions": 360,
+  "coverage": 0.9583,
+  "agreement": 0.9972,
+  "logged_success": 0.7167,
+  "dr_success": 0.7095,
+  "logged_tokens": 5505.3,
+  "dr_tokens": 5482.8,
+  "protected_deviations": 0,
+  "infeasible_choices": 0,
+  "calibration_n": 349,
+  "calibration_ece": 0.03073,
+  "calibration_skill": 0.368219
+ },
+ "reasons": []
+}

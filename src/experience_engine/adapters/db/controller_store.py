@@ -379,11 +379,14 @@ class SqlDecisionLog:
         tenant_id: str,
         *,
         policy_versions: Sequence[str] | None = None,
+        since: datetime | None = None,
         limit: int | None = None,
     ) -> list[DecisionOutcomeRecord]:
         q = self._select().where(PD.c.tenant_id == tenant_id)
         if policy_versions:
             q = q.where(PD.c.policy_version.in_(list(policy_versions)))
+        if since is not None:
+            q = q.where(PD.c.created_at >= since)
         q = q.order_by(PD.c.decision_id)  # UUIDv7: time ordered
         if limit is not None:
             q = q.limit(limit)

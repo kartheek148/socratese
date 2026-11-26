@@ -1,0 +1,106 @@
+
+### stage 0: rule baseline serves and is logged
+live: active=None canary=None shadow=None tasks=120
+  rule-capability/1: n=120 verified=88 tokens=700434
+
+### train candidate adaptive/1 (bandit, explore timeout+pool)
+registered adaptive/1 (BANDIT) CANDIDATE hash=fbaaa6fae9a8; trained on 120 verified decisions (0 UNKNOWN and 0 unacted excluded); calibration n=110 ece=0.050123 ok=True
+
+### offline evidence
+{
+ "stage": "OFFLINE",
+ "verdict": "PASS",
+ "policy_version": "adaptive/1",
+ "definition_hash": "fbaaa6fae9a861e71b13403bdee13829108e3edd0a746fc1d5a903dd67b46a4b",
+ "gate_hash": "464bff63a731747fc1281f106c6f49f632a62bb9b59f1133be548e2de96c4266",
+ "metrics": {
+  "n_decisions": 120,
+  "coverage": 0.95,
+  "agreement": 1.0,
+  "logged_success": 0.7333,
+  "dr_success": 0.7217,
+  "logged_tokens": 5836.9,
+  "dr_tokens": 5836.9,
+  "protected_deviations": 0,
+  "infeasible_choices": 0,
+  "calibration_n": 110,
+  "calibration_ece": 0.050123,
+  "calibration_skill": 0.268639
+ },
+ "reasons": []
+}
+
+### promote -> SHADOW
+adaptive/1 -> SHADOW
+
+### stage 1: shadow run
+live: active=None canary=None shadow=adaptive/1 tasks=120
+  rule-capability/1: n=120 verified=84 tokens=645494
+
+### shadow evidence
+{
+ "stage": "SHADOW",
+ "verdict": "PASS",
+ "policy_version": "adaptive/1",
+ "definition_hash": "fbaaa6fae9a861e71b13403bdee13829108e3edd0a746fc1d5a903dd67b46a4b",
+ "gate_hash": "f6b36ef45cd291fbc89f20c78f754dc147bfa43c6b12a8b29eafa4113f76e2a8",
+ "metrics": {
+  "n_decisions": 120,
+  "agreement": 0.9833,
+  "n_scored_predictions": 120,
+  "live_ece": 0.0581,
+  "live_brier": 0.124,
+  "protected_deviations": 0,
+  "decision_errors": 0,
+  "disagreements_with_model_estimate": 0,
+  "model_est_tokens_per_success_saved_per_disagreement": null
+ },
+ "reasons": []
+}
+
+### promote -> CANARY
+adaptive/1 -> CANARY
+
+### stage 2: canary run (fraction 0.5)
+live: active=None canary=adaptive/1 shadow=None tasks=120
+  adaptive/1: n=60 verified=45 tokens=301361
+  rule-capability/1: n=60 verified=41 tokens=334618
+
+### canary evidence
+{
+ "stage": "CANARY",
+ "verdict": "PASS",
+ "policy_version": "adaptive/1",
+ "definition_hash": "fbaaa6fae9a861e71b13403bdee13829108e3edd0a746fc1d5a903dd67b46a4b",
+ "gate_hash": "f49901ff1223573d6549597a0070e64e24e4d187bb4326271fd66ec805098383",
+ "metrics": {
+  "n_candidate": 60,
+  "n_control": 300,
+  "success_candidate": 0.75,
+  "success_control": 0.71,
+  "diff_lower": -0.0694,
+  "diff_upper": 0.1315,
+  "tokens_per_success_ratio": 0.8488,
+  "candidate_deviation_rate": 0.0167,
+  "protected_exposures": 0,
+  "control_version": null
+ },
+ "reasons": []
+}
+
+### promote -> ACTIVE
+adaptive/1 -> ACTIVE
+
+### status
+adaptive/1     ACTIVE      BANDIT     hash=fbaaa6fae9a8 verified=120 calibrated=True
+    OFFLINE  PASS         
+    SHADOW   PASS         
+    CANARY   PASS         
+  14:38:25 v1 CANDIDATE->SHADOW by ee-ctl: offline PASS
+  14:46:20 v1 SHADOW->CANARY by ee-ctl: shadow PASS
+  14:54:35 v1 CANARY->ACTIVE by ee-ctl: canary PASS
+
+### replay stored candidate decisions
+180/180 stored decisions reproduced exactly
+
+### done

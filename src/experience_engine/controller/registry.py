@@ -104,6 +104,16 @@ class ControllerPolicyRegistry:
         transitions = [PolicyTransition(version, rec.state, to)]
         active = self._in_state(tenant_id, policy_id, S.ACTIVE)
         if to == S.ACTIVE and ev is not None:
+            started = max(
+                (
+                    h.created_at
+                    for h in self._store.history(tenant_id, policy_id)
+                    if h.version == version and h.to_state == S.CANARY
+                ),
+                default=None,
+            )
+            if started is None or ev.created_at < started:
+                problems.append("canary evidence predates the canary period (not concurrent)")
             control = ev.report.metrics.get("control_version")
             expected = active.definition.policy_version if active else None
             if control != expected:
