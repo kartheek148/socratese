@@ -439,3 +439,25 @@ def test_decision_log_since_filters_to_a_window_and_canary_uses_it(
     window = log.outcome_records(TENANT, since=cut)
     assert len(window) == 3
     assert len(log.outcome_records(TENANT, policy_versions=["rule-capability/1"], since=cut)) == 3
+
+
+def test_a_failing_canary_rolls_the_candidate_back_automatically_over_postgres(
+    engine: Engine,
+) -> None:
+    reg, store = registry(engine)
+    d = shadow_def(1)
+    reg.register(d)
+    for to in (S.SHADOW, S.CANARY):
+        advance(reg, d, to)
+    failing = StageReport(
+        stage=Stage.CANARY,
+        verdict=Verdict.FAIL,
+        policy_version=d.policy_version,
+        definition_hash=d.definition_hash(),
+        gate_hash=reg.gates.gate_hash(Stage.CANARY),
+        reasons=["candidate success is significantly lower"],
+    )
+    assert reg.apply_canary_guard(TENANT, "adaptive", 1, failing) is True
+    assert state(engine, 1) == "ROLLED_BACK"
+    assert store.history(TENANT, "adaptive")[-1].actor == "canary-guard"
+    assert build_rollout(store, TENANT, "adaptive", RuleCapabilityPolicy()).canary_version is None

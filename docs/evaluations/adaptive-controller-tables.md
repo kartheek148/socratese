@@ -8,6 +8,8 @@ Parameters (all runs unless stated): n_min 30, min_total_verified 100, epsilon 0
 
 Real model, good capabilities (rule default is right).
 
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "M5.10 set C" docs/evaluations/data/m510-serving-set-c.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m510-serving-set-d.json --kinds cost_aware bandit --explore-families pool timeout --orders 20 --out report.md`
+
 #### M5.10 set C
 
 120 (task, repetition) pairs; 0 UNKNOWN dropped; 0 without an eligible capability.
@@ -42,6 +44,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 ## S2 primary (frozen): M5.10 set D, warm start from set C's rule-only log
 
 Real model, good capabilities (rule default is right).
+
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "M5.10 set D" docs/evaluations/data/m510-serving-set-d.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m510-serving-set-c.json --kinds cost_aware bandit --explore-families pool timeout --orders 20 --out report.md`
 
 #### M5.10 set D
 
@@ -78,6 +82,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 
 No prior log.
 
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "M5.10 set C" docs/evaluations/data/m510-serving-set-c.json --families pool timeout --seed 20260601 --kinds cost_aware bandit --explore-families pool timeout --orders 20 --out report.md`
+
 #### M5.10 set C
 
 120 (task, repetition) pairs; 0 UNKNOWN dropped; 0 without an eligible capability.
@@ -112,6 +118,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 ## S2 secondary (frozen): M5.10 set D, cold start
 
 No prior log.
+
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "M5.10 set D" docs/evaluations/data/m510-serving-set-d.json --families pool timeout --seed 20260601 --kinds cost_aware bandit --explore-families pool timeout --orders 20 --out report.md`
 
 #### M5.10 set D
 
@@ -148,6 +156,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 
 Protected deviations must be 0.
 
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "M5.10 set C (50% high risk)" docs/evaluations/data/m510-serving-set-c.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m510-serving-set-d.json --kinds cost_aware bandit --explore-families pool timeout --orders 20 --protected-share 0.5 --out report.md`
+
 #### M5.10 set C (50% high risk)
 
 120 (task, repetition) pairs; 0 UNKNOWN dropped; 0 without an eligible capability.
@@ -182,6 +192,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 ## S2 protected replay (frozen): set D, 50% of tasks relabelled high risk
 
 Protected deviations must be 0.
+
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "M5.10 set D (50% high risk)" docs/evaluations/data/m510-serving-set-d.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m510-serving-set-c.json --kinds cost_aware bandit --explore-families pool timeout --orders 20 --protected-share 0.5 --out report.md`
 
 #### M5.10 set D (50% high risk)
 
@@ -218,6 +230,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 
 Model-based extrapolation; not independent evidence.
 
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "M5.10 set C (horizon 1500)" docs/evaluations/data/m510-serving-set-c.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m510-serving-set-d.json --kinds cost_aware bandit --explore-families pool timeout --orders 10 --horizon 1500 --out report.md`
+
 #### M5.10 set C (horizon 1500)
 
 120 (task, repetition) pairs; 0 UNKNOWN dropped; 0 without an eligible capability.
@@ -252,6 +266,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 ## S2 exploratory (post-hoc): set D, streams of 1500 tasks resampled with replacement
 
 Model-based extrapolation; not independent evidence.
+
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "M5.10 set D (horizon 1500)" docs/evaluations/data/m510-serving-set-d.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m510-serving-set-c.json --kinds cost_aware bandit --explore-families pool timeout --orders 10 --horizon 1500 --out report.md`
 
 #### M5.10 set D (horizon 1500)
 
@@ -288,6 +304,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 
 Real model, stress portfolio: good pool capability, stale (retired-key) timeout capability.
 
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 held-out H1" docs/evaluations/data/m6-s3-h1-heldout.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m6-s3-d2-development.json --kinds cost_aware bandit --explore-families pool timeout --orders 20 --out report.md`
+
 #### S3 held-out H1
 
 118 (task, repetition) pairs; 2 UNKNOWN dropped; 0 without an eligible capability.
@@ -322,6 +340,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 ## S3 secondary (frozen): held-out H1, cold start
 
 No prior log.
+
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 held-out H1" docs/evaluations/data/m6-s3-h1-heldout.json --families pool timeout --seed 20260601 --kinds cost_aware bandit --explore-families pool timeout --orders 20 --out report.md`
 
 #### S3 held-out H1
 
@@ -358,6 +378,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 
 Protected deviations must be 0.
 
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 held-out H1 (50% high risk)" docs/evaluations/data/m6-s3-h1-heldout.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m6-s3-d2-development.json --kinds cost_aware bandit --explore-families pool timeout --orders 20 --protected-share 0.5 --out report.md`
+
 #### S3 held-out H1 (50% high risk)
 
 118 (task, repetition) pairs; 2 UNKNOWN dropped; 0 without an eligible capability.
@@ -392,6 +414,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 ## S3 exploratory (post-hoc): H1, streams of 1500 tasks
 
 Model-based extrapolation at the frozen parameters.
+
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 held-out H1 (horizon 1500)" docs/evaluations/data/m6-s3-h1-heldout.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m6-s3-d2-development.json --kinds cost_aware bandit --explore-families pool timeout --orders 10 --horizon 1500 --out report.md`
 
 #### S3 held-out H1 (horizon 1500)
 
@@ -428,6 +452,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 
 Run after the verdict, on the held-out table; shows what the mechanism can do with more exploration, never a basis for adopting these values.
 
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 held-out H1 (epsilon 0.2, horizon 1500)" docs/evaluations/data/m6-s3-h1-heldout.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m6-s3-d2-development.json --kinds bandit --explore-families pool timeout --epsilon 0.2 --orders 6 --horizon 1500 --out report.md`
+
 #### S3 held-out H1 (epsilon 0.2, horizon 1500)
 
 118 (task, repetition) pairs; 2 UNKNOWN dropped; 0 without an eligible capability.
@@ -459,6 +485,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 ## S3 exploratory sensitivity (post-hoc, NOT the frozen parameters): epsilon 0.2, horizon 3000
 
 Run after the verdict, on the held-out table; shows what the mechanism can do with more exploration, never a basis for adopting these values.
+
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 held-out H1 (epsilon 0.2, horizon 3000)" docs/evaluations/data/m6-s3-h1-heldout.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m6-s3-d2-development.json --kinds bandit --explore-families pool timeout --epsilon 0.2 --orders 6 --horizon 3000 --out report.md`
 
 #### S3 held-out H1 (epsilon 0.2, horizon 3000)
 
@@ -492,6 +520,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 
 Run after the verdict, on the held-out table; shows what the mechanism can do with more exploration, never a basis for adopting these values.
 
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 held-out H1 (epsilon 0.3, horizon 1500)" docs/evaluations/data/m6-s3-h1-heldout.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m6-s3-d2-development.json --kinds bandit --explore-families pool timeout --epsilon 0.3 --orders 6 --horizon 1500 --out report.md`
+
 #### S3 held-out H1 (epsilon 0.3, horizon 1500)
 
 118 (task, repetition) pairs; 2 UNKNOWN dropped; 0 without an eligible capability.
@@ -524,6 +554,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 
 Run after the verdict, on the held-out table; shows what the mechanism can do with more exploration, never a basis for adopting these values.
 
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 held-out H1 (epsilon 0.3, horizon 3000)" docs/evaluations/data/m6-s3-h1-heldout.json --families pool timeout --seed 20260601 --warm docs/evaluations/data/m6-s3-d2-development.json --kinds bandit --explore-families pool timeout --epsilon 0.3 --orders 6 --horizon 3000 --out report.md`
+
 #### S3 held-out H1 (epsilon 0.3, horizon 3000)
 
 118 (task, repetition) pairs; 2 UNKNOWN dropped; 0 without an eligible capability.
@@ -555,6 +587,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 ## S3 development D2 (design check only, cold start)
 
 Development set used to validate the fixture; not a verdict.
+
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 development D2" docs/evaluations/data/m6-s3-d2-development.json --families pool timeout --seed 20260601 --kinds cost_aware bandit --explore-families pool timeout --orders 20 --out report.md`
 
 #### S3 development D2
 
@@ -590,6 +624,8 @@ Per family (controller vs rule baseline, `success / tokens per verified success`
 ## S3 development D1 (pre-redesign fixture, cold start; design check only)
 
 Variant-dependent drifted capability (see design section 12).
+
+Command: `EE_EVALUATOR_ROLE=evaluator uv run ee-ctl simulate --heldout "S3 development D1 (pre-redesign)" docs/evaluations/data/m6-s3-d1-development-pre-redesign.json --families pool timeout --seed 20260601 --kinds cost_aware bandit --explore-families pool timeout --orders 20 --out report.md`
 
 #### S3 development D1 (pre-redesign)
 

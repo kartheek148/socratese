@@ -182,7 +182,12 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
             reg.gates,
             control_adaptive_version=active.definition.policy_version if active else None,
         )
-    reg.record_evaluation(args.tenant, report)
+    if args.stage == "canary":
+        # a canary FAIL rolls the candidate back immediately (harm must not keep serving traffic)
+        if reg.apply_canary_guard(args.tenant, args.policy_id, args.version, report):
+            print(f"canary FAIL: {args.policy_id}/{args.version} rolled back automatically")
+    else:
+        reg.record_evaluation(args.tenant, report)
     _print_report(report)
     return 0 if report.verdict.value != "FAIL" else 1
 
