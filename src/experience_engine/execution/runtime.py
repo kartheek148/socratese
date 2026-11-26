@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from experience_engine import RUNTIME_VERSION
 from experience_engine.domain.benchmark import AgentConfig
 from experience_engine.domain.outcome import TerminationReason
+from experience_engine.domain.strategy import CapabilityPhase, FallbackPhase
 from experience_engine.domain.task import TaskSpec
 from experience_engine.domain.trace import StepRecord, TraceEventType
 from experience_engine.execution.protocol import (
@@ -39,6 +40,10 @@ class RuntimeResult:
     agent_claimed_done: bool = False
     failure_reasons: list[str] = field(default_factory=list)
     fallback_reason: str | None = None  # set when a capability handed over to general planning
+    # M5.10 attribution (additive; None for plain planning runs)
+    capability_phase: CapabilityPhase | None = None
+    fallback_phase: FallbackPhase | None = None
+    handover_status: str | None = None  # verifier status of the state the capability left
 
 
 class AgentRuntime:

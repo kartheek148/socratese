@@ -17,6 +17,7 @@ from experience_engine.domain.capability import TaskFamilyIs
 from experience_engine.domain.memory import MemoryType
 from experience_engine.domain.outcome import OutcomeStatus
 from experience_engine.evaluation.arms import ArmOutcome, ArmRunner
+from experience_engine.execution.attribution import capability_strategy, memory_strategy
 from experience_engine.execution.capability_runtime import CapabilityRuntime
 from experience_engine.execution.controller import FixedPolicy, RuleCapabilityPolicy
 from experience_engine.execution.orchestrator import RunResult, TaskOrchestrator
@@ -111,6 +112,7 @@ def make_gated_memory_arm(
     catalog: ActiveMemoryCatalog,
     tenant_id: str,
     memory_type: MemoryType,
+    attribute: bool = False,
 ) -> ArmRunner:
     """Production-mode memory: only ACTIVE versions of `memory_type`, applicability-checked. If no
     applicable ACTIVE asset exists the task runs under general planning and the reason is recorded.
@@ -136,6 +138,16 @@ def make_gated_memory_arm(
             asset_ref=sel.ref,
             asset_family=a.task_family if a else None,
             fallback_reason=sel.fallback_reason,
+            strategy=(
+                memory_strategy(
+                    result,
+                    bench.task,
+                    asset_ref=sel.ref,
+                    asset_family=a.task_family if a else None,
+                )
+                if attribute
+                else None
+            ),
         )
 
     return run
@@ -159,14 +171,19 @@ def make_runtime_arm(
     clock: Clock,
     runtime: CapabilityRuntime,
     tenant_id: str = "bench",
+    attribute: bool = False,
 ) -> ArmRunner:
-    """Arm E: production path (matcher -> controller -> executor -> fallback to planning)."""
+    """Arm E (E2): production path (matcher -> controller -> executor -> fallback to planning).
+
+    `attribute=True` records the capability phase and the fallback phase separately (one extra
+    read-only verification at the handover); the executed path and budgets are identical."""
     orchestrator = TaskOrchestrator(
         controller=RuleCapabilityPolicy(),
         verifier=verifier,
         clock=clock,
         config=config,
         capabilities=runtime,
+        attribute_phases=attribute,
     )
 
     def run(bench: BenchTask) -> ArmOutcome:
@@ -178,14 +195,21 @@ def make_runtime_arm(
         reason = result.runtime.fallback_reason
         if ref is None:
             reason = f"no eligible ACTIVE capability (catalog size {n_catalog})"
+        family = family_of_ref(runtime, tenant_id, ref)
+        strategy = (
+            capability_strategy(result, bench.task, asset_family=family, applicable=bool(eligible))
+            if attribute
+            else None
+        )
         return _outcome(
             result,
+            strategy=strategy,
             applicable=bool(eligible),
             capability_used=ref is not None,
             fell_back=bool(result.runtime.fallback_reason),
             asset_kind="CAPABILITY" if ref else None,
             asset_ref=ref,
-            asset_family=family_of_ref(runtime, tenant_id, ref),
+            asset_family=family,
             fallback_reason=reason,
         )
 

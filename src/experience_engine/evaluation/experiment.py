@@ -65,6 +65,7 @@ def _row(arm: str, rep: int, et: ExperimentTask, o: ArmOutcome) -> RunRow:
         asset_ref=o.asset_ref,
         asset_family=o.asset_family,
         fallback_reason=o.fallback_reason,
+        strategy=o.strategy,
     )
 
 

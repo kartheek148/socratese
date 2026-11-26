@@ -21,6 +21,7 @@ from experience_engine.domain.benchmark import AgentConfig
 from experience_engine.domain.capability import CapabilityDefinition
 from experience_engine.domain.experience import Trajectory
 from experience_engine.domain.outcome import OutcomeStatus, aggregate_status
+from experience_engine.domain.strategy import StrategyExecutionResult
 from experience_engine.execution.controller import FixedPolicy
 from experience_engine.execution.orchestrator import TaskOrchestrator
 from experience_engine.ports.clock import Clock
@@ -54,6 +55,7 @@ class ArmOutcome:
     fallback_reason: str | None = None
     # resource accounting (M5.9)
     cache_hit: bool = False  # served from a recorded run, not executed now
+    strategy: StrategyExecutionResult | None = None  # M5.10 phase attribution (serving mode)
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
 

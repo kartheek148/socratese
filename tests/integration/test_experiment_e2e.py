@@ -1,6 +1,7 @@
 """ee-exp against real PostgreSQL: experience loading, the ledger from recorded costs, the CLI,
 and the guarantee that an experiment never touches the registry."""
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -203,3 +204,79 @@ def test_gated_cli_reads_only_active_assets_and_records_the_exact_version_or_the
             assert r.asset_ref == "mem_episodic_pool@1" and r.asset_family == "pool"
     assert any(r.arm == "B" and r.asset_ref for r in result.rows)
     assert "6b. Asset usage" in report.read_text()
+
+
+def test_serving_cli_attributes_phases_serves_only_active_and_honours_strategy_approval(
+    env: Env,
+    private_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from test_memory_governance import built
+    from test_memory_governance_e2e import evaluate as evaluate_memory
+    from test_memory_governance_e2e import promote as promote_memory
+
+    from experience_engine.adapters.db.memory_registry_store import SqlMemoryRegistryStore
+    from experience_engine.adapters.db.memory_store import SqlMemoryStore
+    from experience_engine.domain.evaluation import Verdict, default_policies
+    from experience_engine.governance.memory import MemoryRegistryService
+    from experience_engine.memory.service import register_candidates
+    from support import FakeClock
+
+    learned(env)
+    trajs = load_discovery_experience(SqlExperienceStore(env.engine), env.artifacts, TENANT)
+    register_candidates(SqlMemoryStore(env.engine), built(trajs))
+    svc = MemoryRegistryService(SqlMemoryRegistryStore(env.engine), default_policies(), FakeClock())
+    evaluate_memory(svc, Verdict.PASS, mid="mem_episodic_pool")  # ACTIVE
+    promote_memory(svc, env.engine, mid="mem_episodic_pool")
+    evaluate_memory(svc, Verdict.FAIL, mid="mem_consolidated_pool")  # REJECTED
+    snapshot = states(env.engine)
+
+    monkeypatch.setenv("EE_EVALUATOR_ROLE", "evaluator")
+    monkeypatch.setenv("EE_DATABASE_URL", env.engine.url.render_as_string(hide_password=False))
+    monkeypatch.setenv("EE_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+
+    def run(name: str, *extra: str) -> ExperimentResult:
+        out = tmp_path / f"{name}.json"
+        rc = main(
+            ["run", "--mode", "gated", "--attribute-phases", "--tenant", TENANT,
+             "--root", str(COMMITTED), "--private-root", str(private_root), "--llm", "fake",
+             "--reps", "1", "--workers", "4", "--max-tasks", "8", "--name", name,
+             "--out", str(out), *extra]
+        )  # fmt: skip
+        assert rc == 0, capsys.readouterr().err
+        return ExperimentResult.model_validate_json(out.read_text())
+
+    prod = run(
+        "production"
+    )  # ACTIVE only: the REJECTED memory and CANDIDATE capabilities are inert
+    assert prod.config.asset_states == ["ACTIVE"]
+    used = {(r.arm, r.asset_ref) for r in prod.rows if r.asset_ref}
+    assert used <= {("B", "mem_episodic_pool@1")} and used
+    assert all(r.strategy is not None for r in prod.rows if r.arm in "BCDEF")
+    for r in prod.rows:
+        s = r.strategy
+        if r.arm == "E" and s is not None:  # no ACTIVE capability: plain planning, no phases
+            assert s.strategy_id == "planning" and s.capability is None and not s.fallback.triggered
+        if r.arm == "B" and r.asset_ref and s is not None:
+            assert s.strategy_id == "memory-assisted" and s.asset_kind == "MEMORY"
+            assert s.phases_consistent() and s.total_tokens == r.tokens
+
+    # candidate access only via the explicit experimental mechanism, and approval can still block it
+    research = run("research", "--experimental-states", "ACTIVE", "CANDIDATE", "REJECTED")
+    caps = {r.asset_ref for r in research.rows if r.arm == "E" and r.asset_ref}
+    assert caps and research.config.asset_states == ["ACTIVE", "CANDIDATE", "REJECTED"]
+    blocked = run(
+        "blocked", "--experimental-states", "ACTIVE", "CANDIDATE", "REJECTED", "--approved"
+    )
+    assert not [r for r in blocked.rows if r.asset_ref]  # nothing approved: nothing used
+    assert states(env.engine) == snapshot  # experiments never change registry state
+
+    report = tmp_path / "serving.md"
+    rj = tmp_path / "serving.json"
+    assert main(["serving-report", "--set", "S", str(tmp_path / "research.json"),
+                 "--out", str(report), "--json-out", str(rj)]) == 0  # fmt: skip
+    text = report.read_text()
+    assert "Experimental asset states" in text and "E1 capability only (derived)" in text
+    assert json.loads(rj.read_text()) is not None

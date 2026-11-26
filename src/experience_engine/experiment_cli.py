@@ -11,6 +11,7 @@ Nothing here writes to the registry, so promotion state is never changed by an e
 
 import argparse
 import hashlib
+import json
 import os
 import sys
 from collections import defaultdict
@@ -66,6 +67,8 @@ from experience_engine.evaluation.experiment_arms import (
     make_runtime_arm,
 )
 from experience_engine.evaluation.experiment_report import render_experiment
+from experience_engine.evaluation.serving_report import render_serving_report
+from experience_engine.execution.approval import ApprovedCapabilityCatalog, ApprovedMemoryCatalog
 from experience_engine.execution.capability_runtime import (
     CapabilityRuntime,
     StaticCapabilityCatalog,
@@ -77,6 +80,7 @@ from experience_engine.memory.builders import PREAMBLE
 from experience_engine.memory.service import load_experience
 from experience_engine.ports.artifacts import ArtifactStore
 from experience_engine.ports.experience import ExecutableCapabilityCatalog
+from experience_engine.ports.memory import ActiveMemoryCatalog
 
 
 def load_discovery_experience(
@@ -304,6 +308,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     )
     if gated:
         catalog: ExecutableCapabilityCatalog = SqlExecutableCatalog(engine, asset_states)
+        if args.approved is not None:  # strategy approval (opt-in): only approved refs are offered
+            catalog = ApprovedCapabilityCatalog(catalog, args.approved)
         definitions = catalog.list_executable(args.tenant)
         states = sorted(s.value for s in asset_states)
     else:
@@ -356,13 +362,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
             clock=clock,
             runtime=runtime,
             tenant_id=args.tenant,
+            attribute=args.attribute_phases,
         ),
     }
     memory_assets: list[str] = []
     arm_scope: dict[str, Callable[[ExperimentTask], bool]] = {}
     ungated = set(args.ungated_families or [])
     if gated:
-        mem_catalog = SqlActiveMemoryCatalog(engine, asset_states)
+        mem_catalog: ActiveMemoryCatalog = SqlActiveMemoryCatalog(engine, asset_states)
+        if args.approved is not None:
+            mem_catalog = ApprovedMemoryCatalog(mem_catalog, args.approved)
         memory_assets = [f"{d.memory_id}@{d.version}" for d in mem_catalog.list_active(args.tenant)]
         for arm, mtype in (
             ("B", MemoryType.EPISODIC),
@@ -377,6 +386,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 catalog=mem_catalog,
                 tenant_id=args.tenant,
                 memory_type=mtype,
+                attribute=args.attribute_phases,
             )
         builders["F"] = make_gated_memory_arm(  # noise control: the same path, empty registry
             llm=llm,
@@ -386,6 +396,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             catalog=StaticMemoryCatalog(args.tenant, []),
             tenant_id=args.tenant,
             memory_type=MemoryType.EPISODIC,
+            attribute=args.attribute_phases,
         )
         for arm, retrieve in (
             ("UB", memory.episodic),
@@ -488,6 +499,21 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serving_report(args: argparse.Namespace) -> int:
+    sets = [
+        (name, ExperimentResult.model_validate_json(Path(path).read_text()))
+        for name, path in args.set
+    ]
+    text, evals = render_serving_report(sets, title=args.title)
+    Path(args.out).write_text(text)
+    if args.json_out:
+        Path(args.json_out).write_text(
+            json.dumps([e.model_dump(mode="json") for e in evals], indent=1, sort_keys=True)
+        )
+    print(f"wrote {args.out} ({len(evals)} asset evaluations)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ee-exp")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -516,6 +542,20 @@ def main(argv: list[str] | None = None) -> int:
         help="gated mode: also run the legacy always-inject memory arms (UB/UC/UD) on these "
         "families, to measure negative transfer that gating prevents",
     )
+    run.add_argument(
+        "--attribute-phases",
+        action="store_true",
+        help="record the capability phase and the fallback phase separately (M5.10); the executed "
+        "path is unchanged, one extra read-only verification is taken at each handover",
+    )
+    run.add_argument(
+        "--approved",
+        nargs="*",
+        default=None,
+        metavar="ID@VERSION",
+        help="gated mode, strategy approval: only these asset versions may be offered "
+        "(an ACTIVE but unapproved asset is never used)",
+    )
     run.add_argument("--llm", choices=["fake", "vertex"], default="vertex")
     run.add_argument("--model", default=None, help="model name override (EE_LLM_MODEL)")
     run.add_argument("--reps", type=int, default=2)
@@ -532,6 +572,15 @@ def main(argv: list[str] | None = None) -> int:
     rep.add_argument("--title", default="Capability vs memory experiment")
     rep.add_argument("--maintenance-tokens", type=int, default=0)
     rep.set_defaults(func=_cmd_report)
+    sr = sub.add_parser(
+        "serving-report",
+        help="production-aligned report: capability/fallback attribution and serving decisions",
+    )
+    sr.add_argument("--set", nargs=2, action="append", metavar=("NAME", "RESULTS"), required=True)
+    sr.add_argument("--out", required=True)
+    sr.add_argument("--json-out", default=None)
+    sr.add_argument("--title", default="Production-aligned learning evaluation (generated)")
+    sr.set_defaults(func=_cmd_serving_report)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

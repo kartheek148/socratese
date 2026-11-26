@@ -4,15 +4,19 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ARMS = ("A", "B", "C", "D", "E", "F", "UB", "UC", "UD")
+from experience_engine.domain.strategy import StrategyExecutionResult
+
+ARMS = ("A", "B", "C", "D", "E", "E1", "F", "UB", "UC", "UD")
 LEGACY_ARMS = ("A", "B", "C", "D", "E")
 GATED_ARMS = ("A", "B", "C", "D", "E", "F")
+SERVING_ARMS = ("A", "B", "C", "D", "E", "F")  # E1 is derived from E, never executed
 ARM_NAMES = {
     "A": "stateless baseline",
     "B": "episodic memory",
     "C": "consolidated memory",
     "D": "instruction reuse",
     "E": "compiled capability",
+    "E1": "capability phase only (derived from E)",
     "F": "noise control (empty registry)",
     "UB": "ungated episodic memory",
     "UC": "ungated consolidated memory",
@@ -62,6 +66,8 @@ class RunRow(_Frozen):
     asset_ref: str | None = None  # id@version
     asset_family: str | None = None  # the family the asset declares
     fallback_reason: str | None = None
+    # M5.10: capability / fallback phase attribution (serving mode only; absent in older results)
+    strategy: StrategyExecutionResult | None = None
 
 
 class LearningLedger(_Frozen):

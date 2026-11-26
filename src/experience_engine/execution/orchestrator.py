@@ -29,6 +29,7 @@ from experience_engine.domain.run import (
     OutboxEvent,
     RunRecord,
 )
+from experience_engine.domain.strategy import CapabilityPhase, FallbackPhase, fallback_cause
 from experience_engine.domain.task import TaskSpec
 from experience_engine.domain.time import UtcDatetime
 from experience_engine.domain.trace import StepRecord, TraceEventType
@@ -78,6 +79,7 @@ class TaskOrchestrator:
         artifacts: ArtifactStore | None = None,
         redactor: Redactor | None = None,
         capabilities: CapabilityRuntime | None = None,
+        attribute_phases: bool = False,
     ):
         if (lifecycle is None) != (artifacts is None):
             raise ValueError("lifecycle and artifacts must be configured together")
@@ -89,6 +91,10 @@ class TaskOrchestrator:
         self._artifacts = artifacts
         self._redactor = redactor or Redactor()
         self._capabilities = capabilities
+        # Opt-in: verify the environment at the capability -> planner handover so the capability's
+        # own outcome is recorded independently (one extra read-only verifier call). Default off:
+        # production behaviour, budgets and traces are unchanged.
+        self._attribute = attribute_phases
 
     def execute(
         self,
@@ -378,9 +384,11 @@ class TaskOrchestrator:
             verify=verify,
             resolver=resolve,
         )
+        cap_started = self._clock.monotonic_ms()
         exec_result = executor.run(
             chosen.definition, capability_tenant=task.tenant_id, task=task, facts=facts
         )
+        cap_latency = self._clock.monotonic_ms() - cap_started
         exec_event = sink.emit(
             EmitSpec(
                 type=TraceEventType.CAPABILITY_EXEC,
@@ -413,6 +421,16 @@ class TaskOrchestrator:
             TerminationReason.CAPABILITY_COMPLETED,
             tokens_used=exec_result.tokens_used,
             tool_calls=exec_result.tool_calls,
+            capability_phase=CapabilityPhase(
+                status=exec_result.status.value,
+                reason=exec_result.reason.value,
+                detail=exec_result.detail[:200],
+                tokens=exec_result.tokens_used,
+                tool_calls=exec_result.tool_calls,
+                steps=exec_result.steps_executed,
+                latency_ms=cap_latency,
+                outcome_measured=False,
+            ),
         )
         why = f"{chosen.ref}: {exec_result.reason.value} {exec_result.detail}".strip()[:300]
         if exec_result.status == ExecStatus.COMPLETED:
@@ -452,6 +470,9 @@ class TaskOrchestrator:
         The capability may already have changed the environment; the planner works on the
         current state, and the independent verifier judges the final state either way.
         """
+        handover = self._handover_status(task, session)
+        spent.handover_status = handover
+        fb_started = self._clock.monotonic_ms()
         remaining = {
             "max_tokens": task.max_tokens - exec_result.tokens_used,
             "max_steps": task.max_steps - exec_result.steps_executed,
@@ -475,8 +496,17 @@ class TaskOrchestrator:
             "max_tool_calls": TerminationReason.MAX_TOOL_CALLS,
             "deadline_ms": TerminationReason.DEADLINE,
         }
+        cause = fallback_cause(exec_result.reason.value)
         for key, reason in exhausted.items():
             if remaining[key] <= 0:
+                spent.fallback_phase = FallbackPhase(
+                    triggered=True,
+                    attempted=False,
+                    cause=cause,
+                    reason=why,
+                    remaining_tokens=remaining["max_tokens"],
+                    remaining_tool_calls=remaining["max_tool_calls"],
+                )
                 spent.termination = reason
                 spent.fallback_reason = why
                 spent.failure_reasons += [why, f"no {key} left for fallback"]
@@ -494,4 +524,28 @@ class TaskOrchestrator:
             agent_claimed_done=fallback.agent_claimed_done,
             failure_reasons=[why, *fallback.failure_reasons],
             fallback_reason=why,
+            capability_phase=spent.capability_phase,
+            handover_status=handover,
+            fallback_phase=FallbackPhase(
+                triggered=True,
+                attempted=True,
+                cause=cause,
+                reason=why,
+                remaining_tokens=remaining["max_tokens"],
+                remaining_tool_calls=remaining["max_tool_calls"],
+                tokens=fallback.tokens_used,
+                prompt_tokens=fallback.prompt_tokens,
+                completion_tokens=fallback.completion_tokens,
+                tool_calls=fallback.tool_calls,
+                latency_ms=self._clock.monotonic_ms() - fb_started,
+            ),
         )
+
+    def _handover_status(self, task: TaskSpec, session: EnvironmentSession) -> str | None:
+        """Independent verifier status of the state the capability left (opt-in, read-only)."""
+        if not self._attribute:
+            return None
+        try:
+            return aggregate_status(self._verifier.verify(task, dict(session.snapshot()))).value
+        except Exception:  # a verifier error is UNKNOWN, never a guess
+            return OutcomeStatus.UNKNOWN.value
