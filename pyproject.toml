@@ -18,6 +18,7 @@ ee-relay = "experience_engine.adapters.mq.relay_cli:main"
 ee-learn = "experience_engine.learn_cli:main"
 ee-eval = "experience_engine.eval_cli:main"
 ee-exp = "experience_engine.experiment_cli:main"
+ee-policy = "experience_engine.policy_cli:main"
 ee-gov = "experience_engine.gov_cli:main"
 
 [dependency-groups]

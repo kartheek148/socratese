@@ -1,5 +1,6 @@
 """ee-learn build-memory and ee-gov plumbing against real PostgreSQL (fake model)."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -125,6 +126,15 @@ def test_gov_evaluate_with_candidate_policy_cache_stages_and_counterfactual(
     assert "baseline cache: hits=0" not in second and "misses=0" in second
     rows = rows_of(env.engine)
     assert {r[0] for r in rows} == {"default-low-v2"}  # the governing policy was recorded
+
+    from experience_engine import policy_cli
+
+    out = tmp_path / "reports.json"
+    assert policy_cli.main(["collect", "--tenant", TENANT, "--out", str(out)]) == 0
+    payload = json.loads(out.read_text())
+    assert len(payload["reports"]) == 2 and payload["discovery_tokens"] > 0
+    assert all(r["counterfactuals"][0]["policy_name"] == "default-low" for r in payload["reports"])
+    assert all(r["task_results"] and r["resources"] for r in payload["reports"])
 
 
 def rows_of(engine: Engine) -> list[tuple]:  # type: ignore[type-arg]

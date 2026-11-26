@@ -115,6 +115,22 @@ uv run ee-exp run --mode gated --tenant bench --root DISC --private-root P2 --un
 ```
 `ee-exp --mode gated` reads only ACTIVE assets (memory *and* capabilities) from the database; a task without an applicable ACTIVE asset runs under general planning and the row records the reason. Arm F is the noise control (same path, empty registry); UB/UC/UD are ungated memory on the listed families to measure the negative transfer that gating prevents. `--experimental-states` widens the catalogs for research runs (tagged and bannered in the report). Memory applicability is typed and deterministic (family, tools, file roles, risk, exclusions), never similarity. Results: [evaluations/gated-memory-vs-capability-report.md](./evaluations/gated-memory-vs-capability-report.md).
 
+## Candidate risk-based policy and cheaper validation (M5.9)
+
+`default-low` / `-medium` / `-high` are **unchanged** (a test pins `default-low`'s hash). A separately versioned candidate, `default-low-v2` (+ medium/high), replaces the absolute regression *count* and the source-replay *point* threshold by task-level evidence tests (exact Clopper-Pearson bound on `P(candidate fails | baseline succeeds)`, paired non-inferiority bound, source-replay upper bound, variant concealment guard, zero-tolerance critical violations). Gates are three-valued (PASS / FAIL / INCONCLUSIVE = more evidence needed). Audit: [experiments/promotion-policy-audit.md](./experiments/promotion-policy-audit.md); design and frozen parameters: [experiments/promotion-policy-v2-design.md](./experiments/promotion-policy-v2-design.md); ADR [0013](./decisions/0013-risk-based-promotion-policy-and-cheaper-validation.md).
+
+```
+uv run ee-gov --policy-set risk-v2 evaluate ...        # make the candidate policy govern (opt-in)
+uv run ee-gov evaluate ... --counterfactual-policy-set risk-v2   # govern with default, record v2 on the same evidence
+uv run ee-gov evaluate ... --baseline-cache DIR        # reuse recorded baseline runs across sessions
+uv run ee-gov evaluate ... --staged                    # predefined sequential stopping (never an early PASS)
+uv run ee-eval evaluate ... --skip-memory-control      # omit the B_MEMORY arm (it feeds no gate)
+uv run ee-policy collect --tenant T --out reports.json # export reports with per-task rows
+uv run ee-policy confirm --set A reports_a.json results_a.json --out report.md
+python -m experience_engine.evaluation.policy_simulation   # retrospective simulation on M5.8 data
+```
+A new policy never reopens a REJECTED version or rewrites an evaluation row (both are enforced: terminal state, append-only tables); a re-admission is a new version. Reports now carry `risk_evidence`, `counterfactuals`, `evaluation_config_hash`, stage information and measured `resources` (executed vs reused runs/tokens, input/output tokens where the arm records them). Results: [evaluations/promotion-policy-confirmation-report.md](./evaluations/promotion-policy-confirmation-report.md).
+
 ## Known limitations
 
 * Evaluation uses the simulated benchmark. `--seeds` re-runs every task once per seed and `--workers` runs them concurrently; with `ee-bench generate --private --scale N` suites can be made larger (v2 results used x3 and 2 seeds). Repeats of one task are correlated, so the Wilson intervals are optimistic and the sample-size gates (`min_*_n`) count **distinct tasks**. `max_regressions` is an absolute count and gets stricter as runs grow. Real-model results still vary run to run. First multi-seed results: [evaluations/v2-multiseed-evaluation-and-production-run.md](./evaluations/v2-multiseed-evaluation-and-production-run.md).

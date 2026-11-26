@@ -71,6 +71,16 @@ def test_existing_default_low_is_bit_for_bit_unchanged() -> None:
     assert not isinstance(low, RiskBasedPolicy)
 
 
+def test_existing_regression_rule_boundary_is_unchanged() -> None:
+    from experience_engine.evaluation.policy import decide_verdict
+
+    low = default_policies()["low"]
+    args = {"false_applicability_rate": 0.0, "treatment": T}
+    assert decide_verdict(low, suites(), regressions=1, **args)[0] == Verdict.PASS  # allowed: 1
+    v, why = decide_verdict(low, suites(), regressions=2, **args)
+    assert v == Verdict.FAIL and "2 regressions vs baseline > allowed 1" in why
+
+
 def test_m58_decisions_are_reproduced_exactly_under_the_existing_policy() -> None:
     aggs = aggregates_from_dir(ROOT / "docs/evaluations/gated-validation")
     assert len(aggs) == 8
