@@ -97,3 +97,46 @@ def test_populated_database_survives_noop_upgrade_and_downgrade_clears_it(
     downgrade(scratch_database)  # 0001 is the base schema: downgrade intentionally drops it
     assert _tables(engine) == set()
     engine.dispose()
+
+
+def test_0005_backfills_acted_true_and_downgrades_cleanly(scratch_database: str) -> None:
+    migrate(scratch_database, "0004")
+    engine = sa.create_engine(scratch_database)
+    run_id = "018f0000-0000-7000-8000-000000000001"
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO tasks (tenant_id, task_id, spec, spec_hash, created_at) "
+                "VALUES ('t', 'k', '{}', 'h', now())"
+            )
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO task_runs (run_id, tenant_id, task_id, correlation_id, config_id, "
+                "policy_version, runtime_version, model_settings, tags, status, started_at) "
+                "VALUES (:r, 't', 'k', 'c', 'cfg', 'p', 'v', '{}', '{}', 'RUNNING', now())"
+            ),
+            {"r": run_id},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO policy_decisions (decision_id, tenant_id, run_id, policy_version, "
+                "feature_snapshot, eligible_actions, estimates, selected_action, reason, "
+                "created_at) "
+                "VALUES (gen_random_uuid(), 't', :r, 'rule-capability/1', '{}', '[]', '{}', "
+                "'GENERAL_PLANNING', 'legacy', now())"
+            ),
+            {"r": run_id},
+        )
+    migrate(scratch_database)
+    with engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT acted FROM policy_decisions")).scalar_one() is True
+        assert "controller_policies" in set(inspect(engine).get_table_names())
+        assert "controller_policies_guard" in _triggers(engine)
+    downgrade(scratch_database, "0004")
+    with engine.connect() as conn:
+        cols = {c["name"] for c in inspect(conn).get_columns("policy_decisions")}
+        assert "acted" not in cols
+        assert conn.execute(sa.text("SELECT count(*) FROM policy_decisions")).scalar_one() == 1
+    assert "controller_policies" not in _tables(engine)
+    engine.dispose()

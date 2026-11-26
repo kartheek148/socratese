@@ -82,9 +82,11 @@ def evaluate_offline(
         )
     if est.infeasible_choices > g.max_infeasible_choices:
         fail.append(f"{est.infeasible_choices} choice(s) outside the feasible set")
-    if cal is None or not cal.ok:
-        reasons = "no calibration summary" if cal is None else "; ".join(cal.reasons)
-        fail.append(f"estimator calibration gate not met: {reasons}")
+    if cal is None or cal.n < g.min_decisions:
+        scored = 0 if cal is None else cal.n
+        pending.append(f"only {scored} scored calibration predictions (< {g.min_decisions})")
+    elif not cal.ok:
+        fail.append(f"estimator calibration gate not met: {'; '.join(cal.reasons)}")
     if (
         est.coverage >= g.min_coverage_for_harm_check
         and est.dr_success is not None

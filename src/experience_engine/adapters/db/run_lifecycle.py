@@ -174,6 +174,7 @@ class SqlRunLifecycle:
                     selection_probability=decision.selection_probability,
                     reason=decision.reason,
                     outcome_status=None,
+                    acted=decision.acted,
                     created_at=sa.func.now(),
                 )
             )

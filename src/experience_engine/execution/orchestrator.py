@@ -59,6 +59,8 @@ class RunResult:
     decision: ControllerDecision
     runtime: RuntimeResult
     outcome: RunOutcome
+    # M6: the non-acted decision of the shadow controller, if one is attached and did not fail
+    shadow_decision: ControllerDecision | None = None
 
 
 class TaskOrchestrator:
@@ -80,6 +82,7 @@ class TaskOrchestrator:
         redactor: Redactor | None = None,
         capabilities: CapabilityRuntime | None = None,
         attribute_phases: bool = False,
+        shadow: Controller | None = None,
     ):
         if (lifecycle is None) != (artifacts is None):
             raise ValueError("lifecycle and artifacts must be configured together")
@@ -95,6 +98,9 @@ class TaskOrchestrator:
         # own outcome is recorded independently (one extra read-only verifier call). Default off:
         # production behaviour, budgets and traces are unchanged.
         self._attribute = attribute_phases
+        # M6: a candidate controller that decides alongside the acting one. Its decision is stored
+        # with acted=False and never executed; its failure can never affect the run.
+        self._shadow = shadow
 
     def execute(
         self,
@@ -128,6 +134,10 @@ class TaskOrchestrator:
             )
         )
 
+        shadow_decision, shadow_error = self._shadow_decide(
+            task, run_id, match, [e.ref for e in match.eligible] if match else []
+        )
+
         sink: TraceSink = NullTraceSink()
         if self._lifecycle is not None and self._artifacts is not None:
             self._lifecycle.start_run(
@@ -146,6 +156,8 @@ class TaskOrchestrator:
                 ),
             )
             self._lifecycle.record_decision(decision)
+            if shadow_decision is not None:
+                self._lifecycle.record_decision(shadow_decision)
             sink = RunRecorder(
                 lifecycle=self._lifecycle,
                 artifacts=self._artifacts,
@@ -155,6 +167,26 @@ class TaskOrchestrator:
                 task_id=task.task_id,
                 run_id=run_id,
                 trace_id=run_id,
+            )
+        if self._shadow is not None:
+            sink.emit(
+                EmitSpec(
+                    type=TraceEventType.DECISION,
+                    component="controller_shadow",
+                    component_version=self._shadow.policy_version,
+                    action=shadow_decision.selected_action.value if shadow_decision else "none",
+                    status="error" if shadow_error else "shadow",
+                    metrics={
+                        "decision_id": shadow_decision.decision_id if shadow_decision else None,
+                        "agrees_with_acted": bool(
+                            shadow_decision
+                            and shadow_decision.selected_action == decision.selected_action
+                            and shadow_decision.feature_snapshot.get(SELECTED_CAPABILITY_KEY)
+                            == decision.feature_snapshot.get(SELECTED_CAPABILITY_KEY)
+                        ),
+                        "error": shadow_error,
+                    },
+                )
             )
         decision_event = sink.emit(
             EmitSpec(
@@ -315,7 +347,28 @@ class TaskOrchestrator:
             decision=final_decision,
             runtime=runtime,
             outcome=outcome,
+            shadow_decision=shadow_decision,
         )
+
+    def _shadow_decide(
+        self, task: TaskSpec, run_id: str, match: MatchResult | None, eligible: list[str]
+    ) -> tuple[ControllerDecision | None, str | None]:
+        """The shadow decision (acted=False) or a bounded error string; never raises."""
+        if self._shadow is None:
+            return None, None
+        try:
+            d = self._shadow.decide(
+                ControllerInput(
+                    task=task,
+                    run_id=run_id,
+                    decision_id=new_id(),
+                    eligible_capabilities=eligible,
+                    match=match,
+                )
+            )
+            return d.model_copy(update={"acted": False}), None
+        except Exception as exc:  # a shadow policy must never break or delay the real run
+            return None, f"{type(exc).__name__}: {str(exc)[:160]}"
 
     # ---- strategy dispatch --------------------------------------------------------------------
     def _general(

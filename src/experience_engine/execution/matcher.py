@@ -99,6 +99,9 @@ class MatchResult:
                 "similarity": round(e.similarity, 4),
                 "eligible": True,
                 "reasons": [],
+                "strategy": "COMPOSE_CAPABILITIES"
+                if e.definition.dependencies
+                else "DIRECT_CAPABILITY",
             }
             for e in self.eligible
         ]

@@ -96,7 +96,8 @@ def engine(database_url: str) -> Iterator[Engine]:
                 "capability_evidence, cost_ledger, capability_evaluations, capability_transitions, "
                 "capability_pointers, rollout_observations, memories, memory_versions, "
                 "memory_evaluations, memory_transitions, memory_pointers, "
-                "memory_observations CASCADE"
+                "memory_observations, controller_policies, controller_policy_evaluations, "
+                "controller_policy_transitions CASCADE"
             )
         )
     yield eng

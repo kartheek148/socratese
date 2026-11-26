@@ -33,6 +33,7 @@ def run_benchmark(
     artifacts: ArtifactStore | None = None,
     redactor: Redactor | None = None,
     capabilities: CapabilityRuntime | None = None,
+    shadow: Controller | None = None,
 ) -> list[BenchmarkRunRecord]:
     """Run each task in a fresh session (new environment, new LLM client, no carried state).
 
@@ -50,6 +51,7 @@ def run_benchmark(
         artifacts=artifacts,
         redactor=redactor,
         capabilities=capabilities,
+        shadow=shadow,
     )
     records: list[BenchmarkRunRecord] = []
     for bench_task in tasks:

@@ -145,6 +145,8 @@ policy_decisions = sa.Table(
     sa.Column("reason", sa.Text, nullable=False),
     sa.Column("outcome_status", sa.Text),
     sa.Column("created_at", _ts(), nullable=False),
+    # M6: False for a shadow decision (recorded for evaluation, never executed)
+    sa.Column("acted", sa.Boolean, nullable=False, server_default=sa.true()),
     sa.ForeignKeyConstraint(["tenant_id", "run_id"], ["task_runs.tenant_id", "task_runs.run_id"]),
     sa.CheckConstraint(
         "outcome_status IS NULL OR outcome_status IN "
@@ -638,4 +640,109 @@ APPEND_ONLY_TABLES = (
     "memory_evaluations",
     "memory_transitions",
     "memory_observations",
+    "controller_policy_evaluations",
+    "controller_policy_transitions",
+)
+
+
+# ---- M6: adaptive controller policy lifecycle ---------------------------------------------------
+CONTROLLER_STATES = (
+    "CANDIDATE",
+    "SHADOW",
+    "CANARY",
+    "ACTIVE",
+    "SUPERSEDED",
+    "REJECTED",
+    "ROLLED_BACK",
+)
+
+controller_policies = sa.Table(
+    "controller_policies",
+    metadata,
+    sa.Column("version_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("policy_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("kind", sa.Text, nullable=False),
+    sa.Column("state", sa.Text, nullable=False),
+    sa.Column("definition", JSONB, nullable=False),
+    sa.Column("definition_hash", sa.Text, nullable=False),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.UniqueConstraint("tenant_id", "policy_id", "version"),
+    sa.CheckConstraint(
+        "state IN (" + ",".join(f"'{s}'" for s in CONTROLLER_STATES) + ")", name="state"
+    ),
+    sa.CheckConstraint("kind IN ('COST_AWARE','BANDIT')", name="kind"),
+    sa.CheckConstraint("version >= 1", name="version_positive"),
+    sa.Index("ix_controller_policies_tenant_id_policy_id_state", "tenant_id", "policy_id", "state"),
+    # at most one ACTIVE / CANARY / SHADOW version of a policy, enforced by the database
+    sa.Index(
+        "uq_controller_policies_one_active",
+        "tenant_id",
+        "policy_id",
+        unique=True,
+        postgresql_where=sa.text("state = 'ACTIVE'"),
+    ),
+    sa.Index(
+        "uq_controller_policies_one_canary",
+        "tenant_id",
+        "policy_id",
+        unique=True,
+        postgresql_where=sa.text("state = 'CANARY'"),
+    ),
+    sa.Index(
+        "uq_controller_policies_one_shadow",
+        "tenant_id",
+        "policy_id",
+        unique=True,
+        postgresql_where=sa.text("state = 'SHADOW'"),
+    ),
+)
+
+_CTRL_VERSION_FK = (
+    ["tenant_id", "policy_id", "version"],
+    [
+        "controller_policies.tenant_id",
+        "controller_policies.policy_id",
+        "controller_policies.version",
+    ],
+)
+
+controller_policy_evaluations = sa.Table(
+    "controller_policy_evaluations",
+    metadata,
+    sa.Column("evaluation_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("policy_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("stage", sa.Text, nullable=False),
+    sa.Column("verdict", sa.Text, nullable=False),
+    sa.Column("definition_hash", sa.Text, nullable=False),
+    sa.Column("gate_hash", sa.Text, nullable=False),
+    sa.Column("metrics", JSONB, nullable=False),
+    sa.Column("reasons", JSONB, nullable=False),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_CTRL_VERSION_FK),
+    sa.CheckConstraint("stage IN ('OFFLINE','SHADOW','CANARY')", name="stage"),
+    sa.CheckConstraint("verdict IN ('PASS','FAIL','INCONCLUSIVE')", name="verdict"),
+    sa.Index("ix_controller_policy_evaluations_version", "tenant_id", "policy_id", "version"),
+)
+
+controller_policy_transitions = sa.Table(
+    "controller_policy_transitions",
+    metadata,
+    sa.Column("transition_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("policy_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("from_state", sa.Text, nullable=False),
+    sa.Column("to_state", sa.Text, nullable=False),
+    sa.Column("actor", sa.Text, nullable=False),
+    sa.Column("reason", sa.Text, nullable=False),
+    sa.Column("evaluation_id", _uuid()),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_CTRL_VERSION_FK),
+    sa.ForeignKeyConstraint(["evaluation_id"], ["controller_policy_evaluations.evaluation_id"]),
+    sa.CheckConstraint("char_length(reason) <= 500", name="reason_bounded"),
+    sa.Index("ix_controller_policy_transitions_version", "tenant_id", "policy_id", "version"),
 )
