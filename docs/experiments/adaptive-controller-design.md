@@ -1,0 +1,82 @@
+# M6 design — adaptive strategy controller
+
+Written **before any implementation**. §1 audits what exists, §2 states the decision problem, §3–§6 the design, §7 the frozen parameters and evaluation protocol. Parameters in §7 are frozen here, committed before any M6 data exist, and are not changed afterwards; deviations are reported in an "Outcome" section.
+
+## 0. Scope (M6 only)
+
+In scope (roadmap M6 "Work"): rule-based baseline with **explicit feasibility constraints**; **full decision logging** and reproducible replay; **success-probability and cost estimates with calibration checks**; a **contextual bandit** that is data-gated and exploration-restricted; **offline, shadow and canary** evaluation with rollback.
+Out of scope: PMC / memory selection (M7), self-evolution (M8), neural or deep policies, online RL, learned human-escalation, per-token reasoning-budget control, any change to promotion policies (`default-low`, `default-low-v2`, `serving-low-v1` are untouched), any change to capability/memory lifecycle.
+
+Assumptions (user-approved earlier): simulated benchmark acceptable; application-level tenant isolation; UUIDv7; Postgres + RabbitMQ stack; real Vertex Gemini for real-model runs; commit to `main`.
+
+## 1. Audit of the current implementation
+
+| Piece | Where | State today |
+|---|---|---|
+| Controller port | `execution/controller.py::Controller` (`decide(ControllerInput) -> ControllerDecision`) | Two deterministic policies: `FixedPolicy` (`fixed-general-planning/1`) and `RuleCapabilityPolicy` (`rule-capability/1`). Selection probability always 1.0, `estimates` = lexical similarity only. |
+| Decision contract | `domain/decision.py::ControllerDecision` | Already records eligible set, estimates, selected action, probability, policy version, reason, back-filled `outcome_status`. The selected capability ref is carried in `feature_snapshot["selected_capability"]`. |
+| Decision persistence | `policy_decisions` (+ `run_outcomes` for tokens) | Persisted in the run transaction; outcome back-filled in `complete_run`. One decision per run; no way to record a decision that was *not acted on* (shadow). |
+| Hard constraints | `execution/matcher.py::check_eligibility` (typed preconditions, permissions, budgets, tenant, ACTIVE-only catalog) | Deterministic and outside any scoring. This is the feasibility gate for capability actions; it already exists and must stay the only place that admits a capability. |
+| Estimates | none | No success/cost model, no calibration. |
+| Exploration | none | All propensities 1.0, so logs support no off-policy estimate of any non-default action. |
+| Lifecycle for policies | none | `governance/registry.py` is specific to capability/memory (`EvaluationReport`, held-out suites); it cannot hold a controller policy. |
+| Orchestrator | `execution/orchestrator.py` | Calls one controller; no shadow hook; run uses `decision.selected_action`. |
+
+Evidence about the decision problem (recorded runs, no new data): in the M5.10 sets C and D (good capabilities) capability-first strictly dominated planning-first in every one of 12 family×variant cells (success and tokens). In the M5.9 P4 set A (defective capabilities) the picture is heterogeneous: timeout/httpx planning 7/15 at 6.8k tokens vs capability-first 6/15 at 7.8k; pool capability-first 24/30 vs 10/30 at 8.5k vs 5.3k tokens. **A learned controller can only help where the rule default is not the best action**; on good-capability portfolios the correct result is "equal to the rule baseline". M6 therefore has to show (a) it never does worse where the rule is right, (b) it can recover where the rule is wrong, (c) it is safe by construction, and (d) report honestly where evidence is insufficient to decide.
+
+## 2. Decision problem
+
+Context `x` (known before acting; never hidden success criteria): task family, risk level, number of allowed tools, and the matcher's eligible capabilities with similarity. Actions: `GENERAL_PLANNING`, `DIRECT_CAPABILITY:<ref>` / `COMPOSE_CAPABILITIES:<ref>` for each *eligible* capability (the existing `Strategy` enum and `selected_capability` convention are kept; no contract break). `HUMAN_ESCALATION` is never selected by M6 (no cost model for humans).
+
+Outcome of an action is the **final verified outcome of the whole run including the production planner fallback** (M5.10 lesson: the unit the user receives). `UNKNOWN` outcomes are excluded from every estimate and counted. Cost = total tokens of the run.
+
+## 3. Constraints are outside the learned policy
+
+Layers, in order; later layers can only choose among what earlier layers allow:
+1. **Eligibility** (existing matcher): permissions, tenant, preconditions, budgets, ACTIVE state. A capability that is not eligible is not an action.
+2. **Feasibility layer** (new, `controller/feasibility.py`, pure, no learning): the rule baseline's default action `d(x)` (best-similarity eligible capability, else planning) and the feasible set `F(x)`. Risk classes outside `learned_risk_levels` are **protected**: the controller returns the rule decision unchanged, never explores, never reads estimates. `high` can never be configured as learned (validated). A tenant mismatch between the task and the policy definition also returns the rule decision.
+3. **Reliability constraint**: an action may replace the default only with confidence it does not lose success: Newcombe-Wilson one-sided lower bound of `p_a − p_d` ≥ `−δ_risk`; optionally an absolute floor `required_success[risk]` (default 0 = off; the benchmark's planning success of ~30% makes any absolute floor workload-specific) on the Wilson lower bound.
+4. **Cost optimisation**: among actions that meet 1–3 with sufficient evidence, choose the lowest estimated expected tokens, but leave the default unless the saving is ≥ `min_cost_saving`. Cost never compensates for a failed constraint.
+5. **Exploration (bandit only)**: ε-greedy over an explicitly allow-listed set of families and risk levels (default: none), only after the data gate (§5), only among feasible actions not already confidently worse than the default. Exact selection probability is logged; randomness is a deterministic hash of `decision_id`, so a decision is reproducible.
+
+## 4. Policies
+
+* `rule-capability/1`, `fixed-general-planning/1` — unchanged baselines.
+* `adaptive/<n>` — one family of versioned policies, each an immutable `ControllerPolicyDefinition` = typed parameters + frozen `EstimatorSnapshot` (per context×action cell: verified trials, successes, token sum) + training provenance, hashed (`definition_hash`). `kind=COST_AWARE` never explores (probability 1.0); `kind=BANDIT` adds §3.5. The estimator is a tabular contextual model (context = family × risk; action = planning or a capability ref): the only features available at decision time that carry signal in this benchmark. It is deliberately simple; richer features/models are possible later behind the same definition type.
+* The snapshot is produced by the **learning plane** from `policy_decisions ⋈ run_outcomes` (acted decisions only; verified outcomes only) and published as a new policy version; execution never reads live tables and never waits for training.
+
+## 5. Evidence gates
+
+* **Data sufficiency** (§3 step 3/5): a cell takes part only with `n ≥ n_min` verified trials; the default must have `n ≥ n_min` for any deviation; exploration additionally needs `total verified ≥ min_total_verified` and `snapshot.calibration_ok`.
+* **Calibration** (`controller/calibration.py`): prequential (each prediction made before its outcome is observed, in log order): Brier score, ECE (equal-width bins), reliability table, Brier skill vs the running global rate, and for cost the bias and MAPE. Gate: `n ≥ 100`, `ECE ≤ 0.10`, skill ≥ 0.
+* **Off-policy estimates** (`controller/replay.py`): IPS, self-normalised IPS and doubly-robust estimates of success and tokens for a candidate on logged propensities, with explicit **support coverage** (share of decisions whose candidate action has logged propensity > 0). Rule-only logs have zero coverage for any deviation, which is itself reported ("no counterfactual evidence").
+* **Full-information replay**: for recorded paired experiments (`ee-exp` arms A and E share the same tasks) every task has the outcome of both actions. A prequential simulator (`controller/simulate.py`) runs controller and rule baseline over seeded task orders, learning only from outcomes of the actions it chose, so exploration cost is paid and measured. One recorded draw per task/arm: this is replay of a stochastic process, not a repeated measurement.
+
+## 6. Rollout: offline → shadow → canary → active, with rollback
+
+Policy lifecycle (`CANDIDATE → SHADOW → CANARY → ACTIVE`, side states `REJECTED`, `ROLLED_BACK`, `SUPERSEDED`), enforced by a dedicated `ControllerPolicyRegistry` (not the capability registry, whose evidence type is specific to held-out capability suites). Each forward transition requires a stored PASS evaluation of the previous stage with the stage's hashed gate set:
+* **OFFLINE → SHADOW**: min decisions; calibration gate; **zero protected-class deviations and zero choices outside `F(x)`** on replayed logs; no confident predicted harm.
+* **SHADOW → CANARY**: the candidate decides alongside the active controller on live tasks, its decision stored with `acted=false`; min decisions; live prequential calibration of the acted action; zero protected deviations; reports agreement rate and model-based cost effect.
+* **CANARY → ACTIVE**: deterministic hash split of *task ids* (low-risk non-protected tasks only; protected tasks never reach the candidate); concurrent control. PASS requires success non-inferiority (Newcombe lower bound ≥ `−δ_canary`) with both arms ≥ `n_min_canary`; FAIL (and an automatic `ROLLED_BACK`) on confident harm or any protected-class exposure; INCONCLUSIVE otherwise. Token effect is reported with a bootstrap-free ratio of tokens per verified success; it can raise "improves" but never offset a failed constraint.
+* **Rollback**: `ACTIVE → ROLLED_BACK` restores the superseded version in the same transaction; history is append-only; a rolled-back or rejected version is never reopened (a new version is created instead).
+
+Persistence (migration 0005): `controller_policies` (immutable definition + hash; mutable `state` only), `controller_policy_transitions` (append-only), `controller_policy_evaluations` (append-only stage evidence); `policy_decisions.acted boolean default true`. At most one ACTIVE and one CANARY version per `(tenant, policy_id)` (partial unique indexes).
+
+## 7. Frozen parameters and evaluation protocol
+
+Defaults (`ControllerParams`): `learned_risk_levels=[low]`; `exploration_risk_levels=[]`, `exploration_families=[]` (explicit opt-in); `epsilon=0.10`; `n_min=30`; `min_total_verified=100`; `delta={low:0.10, medium:0.05}` (medium is only reachable if a tenant lists it as learned); `confidence=0.95` one-sided; `min_cost_saving=0.10`; `cost_prior_weight=5`; `required_success={}`; calibration gate `n≥100, ECE≤0.10, skill≥0`; canary `n_min_canary=30` per arm, `δ_canary=0.10`, canary fraction 0.2. At these values the controller can deviate only with strong per-cell evidence (≈ n=100+ per action for a 10-point margin); this conservatism is intended and its consequence for benchmark-scale data is part of the reported result.
+
+Evaluation (frozen before data):
+1. **Mechanism tests (synthetic ground truth, labelled as such).** Seeded scenarios where the optimum differs from the rule default (harmful stale capability; heterogeneous portfolio: good pool capability + stale timeout capability; drift mid-sequence) and where it does not (good capability). Verify: the controller keeps the default where the rule is right (success and tokens equal to the baseline within the exploration cost), recovers where the rule is wrong, never deviates on protected tasks, and calibration/gates behave. This validates the mechanism; it is **not** evidence about real models.
+2. **Real recorded data, full-information replay.** (a) M5.10 sets C and D (good capabilities; the held-out sequences for the "rule is right" regime; one set also used as training log for the other); (b) a fresh real-model paired run (arms A and E) on a new private seed with a portfolio containing a **deliberately stale capability** (hand-authored through the validated DSL, labelled as a stress fixture), development seed for design checks and a separate held-out seed for the verdict. 20 random task orders per set (fixed seeds).
+3. **Decision rule for "beats the rule baseline" (frozen).** On the held-out set, per-task paired comparison of controller vs rule baseline: BEATS iff (i) success difference non-inferior (cluster-bootstrap lower bound ≥ −0.05) **and** (ii) tokens per verified success lower with the one-sided 95% upper bound of the ratio < 1.0. EQUAL iff neither (i)-violation nor (ii)-improvement is shown. WORSE iff success lower bound < −0.05. Anything else INCONCLUSIVE. Reported regardless of direction.
+4. **Protected / high-risk**: property tests over randomised snapshots (decision identical to the rule decision, probability 1.0, no estimate read), plus a replay with injected high-risk tasks.
+5. **Live shadow and canary** on a small real-model run through the registry (fresh seed), reported as mechanism evidence with its sample size.
+6. **Cost accounting**: learning cost of the controller (training and evaluation tokens: 0 model tokens for tabular training; replay/validation runs reported), exploration cost (tokens and successes lost to exploration vs baseline).
+
+## 8. Files expected to change
+New: `domain/controller.py`, `domain/rollout.py`, `controller/{__init__,features,feasibility,estimator,calibration,policy,replay,simulate,datasets,gates,rollout,registry}.py`, `ports/controller_store.py`, `adapters/db/controller_store.py`, `alembic/versions/0005_controller_policies.py`, `controller_cli.py` (`ee-ctl`), tests (`unit/test_controller_*.py`, `integration/test_controller_e2e.py`, migration test), docs (`docs/controller.md`, ADR 0015, evaluation report).
+Modified: `domain/decision.py` (+`acted`), `execution/orchestrator.py` (shadow hook, persisting non-acted decisions), `adapters/db/{tables,run_lifecycle,reader}.py`, `ports/persistence.py`, `cli.py` (`ee-bench run --controller`), `evaluation/experiment_arms.py` (controller injection), `tests/architecture/test_import_boundaries.py` (new pure package), `pyproject.toml` (`ee-ctl`), `docs/{architecture,schema,evaluation,runtime}.md`, README.
+
+## 9. Risks
+Statistical: tabular cells conflate variants (a capability good on some variants and bad on others averages out — an honest limitation of the available features); non-inferiority at 10 points needs ≈100+ trials per action, more than benchmark scale; replay uses one stochastic draw per task/arm; exploration of planning yields data only for tasks where it is tried. Operational: shadow decisions add negligible CPU and must never raise into the run (guarded, recorded as an error event); canary assignment must be stable per task; propensities must be exact or the off-policy estimators are invalid. Security: the controller can only select among matcher-eligible capabilities (re-asserted in the orchestrator); no learned component can widen the action set, change risk classes or permissions.
