@@ -4,6 +4,7 @@ leak into a monitor, and a drift overlay can never produce an unsafe choice."""
 import hashlib
 import json
 import random
+from pathlib import Path
 
 import pytest
 from test_controller_evidence import COST_STALE, RATES_STALE  # noqa: F401
@@ -155,3 +156,25 @@ def test_the_synthetic_scenarios_and_perturbations_are_deterministic() -> None:
     assert a.prior.cells == b.prior.cells and a.material == b.material
     other = build_stream(SCENARIOS["S5"], 100)
     assert [t.outcomes for t in other.tasks[:50]] != [t.outcomes for t in a.tasks[:50]]
+
+
+def test_drift_report_renders_acceptance_and_run_sensitivity(tmp_path: Path) -> None:
+    """drift-sim -> drift-report round trip on one seed (verdicts are meaningless at this size; the
+    point is that the report is generated from stored runs and exposes how (a)-(c) depend on the
+    run that measured them)."""
+    from experience_engine.controller_cli import main
+
+    loop, mon, out = (tmp_path / n for n in ("loop.json", "mon.json", "acc.md"))
+    base = ["drift-sim", "--seeds", "1", "--workers", "1", "--seed-start", "5000000"]
+    assert main([*base, "--out", str(tmp_path / "l.md"), "--json-out", str(loop)]) == 0
+    assert (
+        main([*base, "--variants", "monitor", "--out", str(tmp_path / "m.md"),
+              "--json-out", str(mon)]) == 0
+    )  # fmt: skip
+    assert (
+        main(["drift-report", "--loop", str(loop), "--monitor", str(mon), "--out", str(out)]) == 0
+    )
+    text = out.read_text()
+    assert "Sensitivity: criteria (a)-(c)" in text
+    for label in ("monitor-only (used)", "in-loop SHADOW", "in-loop ENFORCE"):
+        assert label in text

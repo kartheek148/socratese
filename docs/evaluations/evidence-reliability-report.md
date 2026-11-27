@@ -71,7 +71,20 @@ New: 14 monitor tests of windows, channels, small samples, state machine, persis
 
 ## 11. Test results
 
-TEST_RESULTS_PLACEHOLDER
+Commands (Postgres and RabbitMQ from `deploy/docker-compose.yml`, project `ee-m62`):
+
+```
+uv run ruff check .                                    # All checks passed
+uv run ruff format --check .                           # 330 files already formatted
+uv run mypy src                                        # Success: no issues found in 173 source files
+EE_TEST_DATABASE_URL=postgresql+psycopg://ee:ee_dev_password@127.0.0.1:55437/postgres \
+EE_TEST_AMQP_URL='amqp://ee:ee_dev_password@127.0.0.1:57001//' \
+  uv run pytest -p no:cacheprovider -q -ra --durations=3
+```
+
+Result: **exit code 0; 762 tests collected and run, none failed, errored or skipped** (the previous milestone's suite was 657; M6.2 adds the unit, integration and migration tests of §10). After that run one more test (the `drift-sim → drift-report` round trip, which verifies the sensitivity table of §13) was added: `tests/unit/test_drift_regression.py` 9 passed; the collection count is now 763. The repository sets `addopts = "-q"`, so an extra `-q` suppresses pytest's final summary line; the counts above come from the progress lines (762 dots), the collection count and the exit status, not from a summary line. The slowest tests are pre-existing M6.1 simulations (209 s, 142 s, 132 s on a loaded machine); M6.2 changed neither them nor `task_stats`.
+
+Migration tests (including 0007: upgrade, append-only table, constraints, refusing downgrade with rows) and the integration tests with a real Postgres (drift end-to-end: 5; serving-evidence end-to-end: 5) are part of that run. Pinned and unchanged: the M6 definition hashes (`53b7c21a…`, `fe45fb19…`, `9f559935…`), the M6.1 evidence definition and snapshot hashes (`08b419f4…`, `b99dae48…`), the decision digests of the M6, M6.1 evidence, bandit and cold policies (computed with the M6.1 code before any M6.2 change) and `default-low`'s hash `7b6f0944819b…`. The 22/22 mutation result is in §10 (the mutation runs used a separate worktree and are not part of the suite).
 
 ## 12. Experiment protocol (frozen before held-out data)
 
