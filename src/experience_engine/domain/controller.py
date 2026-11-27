@@ -7,6 +7,7 @@ decision can be recomputed from the stored record and the policy version alone.
 
 import hashlib
 import json
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -21,6 +22,7 @@ from pydantic import (
 )
 
 from experience_engine.domain.decision import Strategy
+from experience_engine.domain.drift import DriftParams, DriftView
 from experience_engine.domain.outcome import OutcomeStatus
 
 FEATURE_SCHEMA_VERSION = 1
@@ -77,6 +79,15 @@ class EvidenceParams(_F):
     explore_target_cap: int = Field(
         default=400, ge=1
     )  # per-alternative cap of the exploration target
+    # M6.2: the offline gate FAILs priors that are not production-eligible (omitted when False)
+    require_production_eligible: bool = False
+
+    @model_serializer(mode="wrap")
+    def _omit_default_eligibility(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not self.require_production_eligible:
+            data.pop("require_production_eligible", None)
+        return data
 
 
 class ControllerParams(_F):
@@ -96,12 +107,16 @@ class ControllerParams(_F):
     # None = M6 behaviour (priors ignored, constant-epsilon bandit). Omitted from the serialised
     # form when None, so every M6 definition keeps its hash.
     evidence: EvidenceParams | None = None
+    # M6.2 windowed drift monitor (needs the evidence module); omitted when None
+    drift: DriftParams | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_evidence(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         data: dict[str, Any] = handler(self)
         if self.evidence is None:
             data.pop("evidence", None)
+        if self.drift is None:
+            data.pop("drift", None)
         return data
 
     @field_validator("learned_risk_levels", "exploration_risk_levels", "exploration_families")
@@ -122,6 +137,8 @@ class ControllerParams(_F):
             raise ValueError("required success thresholds must lie in [0, 1]")
         if self.evidence is not None and self.required_success:
             raise ValueError("required_success is not supported with the evidence module")
+        if self.drift is not None and self.evidence is None:
+            raise ValueError("the drift monitor needs the evidence module")
         return self
 
 
@@ -187,6 +204,42 @@ class PairedSource(_F):
         ge=0
     )  # tokens of both actions over the used pairs: learning cost
     capabilities: list[str] = Field(default_factory=list)
+    # M6.2 provenance and eligibility (all omitted from the serialised form when unset, so the
+    # hashes of M6.1 definitions are unchanged)
+    evidence_kind: str | None = None
+    production_eligible: bool | None = None
+    tenant_id: str | None = None
+    risk_class: str | None = None
+    evaluation_id: str | None = None
+    report_sha256: str | None = None
+    evaluation_config_hash: str | None = None
+    environment_version: str | None = None
+    recorded_at: datetime | None = None
+    n_missing_cost: int | None = None
+    overrides: list[str] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_provenance(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        for key in _PROVENANCE_OPTIONAL:
+            if data.get(key) in (None, []):
+                data.pop(key, None)
+        return data
+
+
+_PROVENANCE_OPTIONAL = (
+    "evidence_kind",
+    "production_eligible",
+    "tenant_id",
+    "risk_class",
+    "evaluation_id",
+    "report_sha256",
+    "evaluation_config_hash",
+    "environment_version",
+    "recorded_at",
+    "n_missing_cost",
+    "overrides",
+)
 
 
 class CalibrationSummary(_F):
@@ -313,6 +366,7 @@ class DecisionFeatures(_F):
     u: float | None = None  # reproducible uniform draw (exploration decision)
     paired: list[PairedView] = Field(default_factory=list)  # M6.1 paired priors read
     evidence_module: bool = False  # M6.1 decision rules apply (False: exact M6 behaviour)
+    drift: list[DriftView] = Field(default_factory=list)  # M6.2 drift overlay read (ENFORCE)
 
 
 class DecisionOutcomeRecord(_F):
@@ -333,6 +387,11 @@ class DecisionOutcomeRecord(_F):
     actions: list[CandidateFeature] = Field(default_factory=list)  # feasible set at decision time
     default_key: str = PLANNING_KEY  # the rule baseline's choice in that context
     propensities: dict[str, float] = Field(default_factory=dict)  # logged distribution, if known
+    # M6.2 provenance of the observation (not used by estimators; read by the drift monitor)
+    observed_at: datetime | None = None
+    runtime_version: str | None = None
+    verifier_version: str | None = None
+    latency_ms: int | None = None
 
     @property
     def known(self) -> bool:

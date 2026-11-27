@@ -13,12 +13,15 @@ import random
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
+from experience_engine.controller.drift import MonitorFleet, references_from_snapshot
 from experience_engine.controller.estimator import build_snapshot
 from experience_engine.controller.features import features_for
 from experience_engine.controller.paired import PairedPrior
-from experience_engine.controller.policy import MODE_EXPLORE, choose
+from experience_engine.controller.perturb import Perturbation
+from experience_engine.controller.policy import MODE_EXPLORE, MODE_PROBE, choose
 from experience_engine.domain.controller import (
     CandidateFeature,
     ControllerKind,
@@ -27,6 +30,7 @@ from experience_engine.domain.controller import (
     DecisionOutcomeRecord,
     Risk,
 )
+from experience_engine.domain.drift import DriftTransition
 from experience_engine.domain.outcome import OutcomeStatus
 from experience_engine.evaluation.task_stats import (
     CostUnit,
@@ -62,6 +66,10 @@ class SimDrift:
     survival: float
 
 
+SIM_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)  # position i is observed at SIM_EPOCH + i hours
+SIM_VERIFIER = "v-1"
+
+
 def _unit(label: str, index: int) -> float:
     digest = hashlib.sha256(f"drift|{label}|{index}".encode()).hexdigest()
     return int(digest[:8], 16) / 0x1_0000_0000
@@ -79,6 +87,8 @@ class SimConfig:
     # M6.1: paired validation prior carried by every published snapshot (never a live record)
     prior: PairedPrior | None = None
     drift: SimDrift | None = None
+    # M6.2: synthetic perturbation of the alternative's observed outcomes (labelled experiments)
+    perturb: Perturbation | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +105,7 @@ class SimStep:
     tokens: int
     default_status: OutcomeStatus
     default_tokens: int
+    drift_state: str = "NORMAL"  # state of the alternative's cell the decision read
 
     @property
     def success(self) -> bool:
@@ -111,6 +122,10 @@ class SimStep:
     @property
     def explored(self) -> bool:
         return self.mode == MODE_EXPLORE
+
+    @property
+    def probed(self) -> bool:
+        return self.mode == MODE_PROBE
 
 
 def make_orders(
@@ -156,17 +171,28 @@ def rule_log(tasks: Sequence[TaskOutcome], tenant_id: str = "bench") -> list[Dec
     return out
 
 
-def run_sequence(
+@dataclass
+class SimRun:
+    steps: list[SimStep]
+    transitions: list[DriftTransition] = field(default_factory=list)
+    final_states: dict[str, str] = field(default_factory=dict)
+
+
+def run_stream(
     tasks: Sequence[TaskOutcome],
     order: Sequence[int],
     cfg: SimConfig,
     warm: Sequence[DecisionOutcomeRecord] = (),
     label: str = "sim",
-) -> list[SimStep]:
+) -> SimRun:
     records = list(warm)
     definition: ControllerPolicyDefinition | None = None
     snap_hash = ""
     steps: list[SimStep] = []
+    dp = cfg.params.drift
+    fleet: MonitorFleet | None = None
+    ingested = len(records)
+    overlay = None
     for i, idx in enumerate(order):
         if definition is None or i % cfg.refresh_every == 0:
             train = records if cfg.train_window is None else records[-cfg.train_window :]
@@ -179,6 +205,12 @@ def run_sequence(
                 snapshot=snap,
             )
             snap_hash = snap.snapshot_hash()
+            if dp is not None:
+                if fleet is None:
+                    fleet = MonitorFleet(references_from_snapshot(snap), dp)
+                fleet.ingest(records[ingested:])
+                ingested = len(records)
+                overlay = fleet.overlay()
         t = tasks[idx]
         f = features_for(
             definition,
@@ -190,6 +222,7 @@ def run_sequence(
             n_allowed_tools=0,
             actions=t.actions,
             default_key=t.default_key,
+            overlay=overlay,
         )
         choice = choose(f, cfg.params)
         status, tokens = t.outcomes[choice.selected_key]
@@ -203,6 +236,13 @@ def run_sequence(
             and _unit(label, i) >= drift.survival
         ):
             status = OutcomeStatus.FAILURE
+        runtime = "rt-1"
+        pt = cfg.perturb
+        if pt is not None and choice.selected_key == pt.action:
+            ok, tokens, runtime = pt.apply(
+                i, t.family, status == OutcomeStatus.VERIFIED_SUCCESS, tokens
+            )
+            status = OutcomeStatus.VERIFIED_SUCCESS if ok else OutcomeStatus.FAILURE
         records.append(
             DecisionOutcomeRecord(
                 decision_id=f"{label}-{i}",
@@ -218,6 +258,9 @@ def run_sequence(
                 actions=t.actions,
                 default_key=t.default_key,
                 propensities=choice.propensities,
+                observed_at=SIM_EPOCH + timedelta(hours=i),
+                runtime_version=runtime,
+                verifier_version=SIM_VERIFIER,
             )
         )
         steps.append(
@@ -234,9 +277,26 @@ def run_sequence(
                 tokens,
                 d_status,
                 d_tokens,
+                f.drift[0].state.value if f.drift else "NORMAL",
             )
         )
-    return steps
+    if fleet is not None:
+        fleet.ingest(records[ingested:])
+    return SimRun(
+        steps,
+        list(fleet.transitions) if fleet is not None else [],
+        {k: s.state.value for k, s in fleet.states.items()} if fleet is not None else {},
+    )
+
+
+def run_sequence(
+    tasks: Sequence[TaskOutcome],
+    order: Sequence[int],
+    cfg: SimConfig,
+    warm: Sequence[DecisionOutcomeRecord] = (),
+    label: str = "sim",
+) -> list[SimStep]:
+    return run_stream(tasks, order, cfg, warm, label).steps
 
 
 @dataclass(frozen=True)

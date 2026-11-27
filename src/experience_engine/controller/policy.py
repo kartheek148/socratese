@@ -9,9 +9,18 @@ evidence and a non-inferiority bound; cost is only minimised among actions that 
 from dataclasses import dataclass
 
 from experience_engine.controller.estimator import cost_hat, p_hat
-from experience_engine.controller.evidence import explorable_evidence, greedy_evidence
+from experience_engine.controller.evidence import (
+    explorable_evidence,
+    greedy_evidence,
+    probe_alternatives,
+)
 from experience_engine.controller.features import build_features
-from experience_engine.controller.modes import MODE_DEFERRED, MODE_EXPLORE, MODE_GREEDY
+from experience_engine.controller.modes import (
+    MODE_DEFERRED,
+    MODE_EXPLORE,
+    MODE_GREEDY,
+    MODE_PROBE,
+)
 from experience_engine.domain.controller import (
     CONTROLLER_KEY,
     ControllerKind,
@@ -22,10 +31,11 @@ from experience_engine.domain.controller import (
     parse_action_key,
 )
 from experience_engine.domain.decision import ControllerDecision, Strategy
+from experience_engine.domain.drift import DriftOverlay
 from experience_engine.domain.stats import newcombe_difference_bounds, wilson_one_sided
 from experience_engine.execution.controller import SELECTED_CAPABILITY_KEY, ControllerInput
 
-__all__ = ["MODE_DEFERRED", "MODE_EXPLORE", "MODE_GREEDY"]
+__all__ = ["MODE_DEFERRED", "MODE_EXPLORE", "MODE_GREEDY", "MODE_PROBE"]
 
 
 @dataclass(frozen=True)
@@ -168,21 +178,26 @@ def choose(f: DecisionFeatures, params: ControllerParams) -> Choice:
         return _deferred(f, "single feasible action")
     if f.evidence_module and params.evidence is not None:
         greedy, reason, est, greedy_mode, assess = greedy_evidence(f, params, _estimates(f, params))
-        pool = explorable_evidence(f, params, greedy, assess)
+        probes = probe_alternatives(f, params)
+        pool = (
+            sorted({greedy, *probes}) if probes else explorable_evidence(f, params, greedy, assess)
+        )
     else:
+        probes = []
         greedy, reason, est, greedy_mode = _greedy(f, params)
         pool = _explorable(f, params, greedy)
     if len(pool) < 2 or f.u is None:
         return Choice(greedy, 1.0, {greedy: 1.0}, est, reason, greedy_mode)
-    eps = params.epsilon
+    eps = params.drift.probe_rate if probes and params.drift is not None else params.epsilon
     m = len(pool)
     props = {k: eps / m for k in pool}
     props[greedy] += 1.0 - eps
     if f.u < eps:
         selected = pool[min(int(f.u / eps * m), m - 1)]
-        mode = MODE_EXPLORE
+        mode = MODE_PROBE if probes else MODE_EXPLORE
+        what = "recovery probe" if probes else "epsilon"
         why = (
-            f"[{MODE_EXPLORE}] epsilon={eps} draw u={f.u:.4f} picked {selected} among {m} "
+            f"[{mode}] {what}={eps} draw u={f.u:.4f} picked {selected} among {m} "
             f"explorable actions (greedy would be {greedy})."
         )
     else:
@@ -194,15 +209,19 @@ def choose(f: DecisionFeatures, params: ControllerParams) -> Choice:
 
 
 class AdaptiveController:
-    """`Controller` backed by one frozen policy definition (cost-aware or bandit)."""
+    """`Controller` backed by one frozen policy definition (cost-aware or bandit).
 
-    def __init__(self, definition: ControllerPolicyDefinition):
+    The optional drift overlay is the monitor's published state, read once at construction
+    (never per decision)."""
+
+    def __init__(self, definition: ControllerPolicyDefinition, overlay: DriftOverlay | None = None):
         self.definition = definition
         self.policy_version = definition.policy_version
         self._snapshot_hash = definition.snapshot.snapshot_hash()
+        self._overlay = overlay
 
     def decide(self, ctx: ControllerInput) -> ControllerDecision:
-        f = build_features(ctx, self.definition, self._snapshot_hash)
+        f = build_features(ctx, self.definition, self._snapshot_hash, self._overlay)
         choice = choose(f, self.definition.params)
         return decision_from(ctx, f, choice, self.policy_version)
 

@@ -14,6 +14,7 @@ from experience_engine.domain.controller import (
     cell_key,
     paired_key,
 )
+from experience_engine.domain.drift import DriftMode, DriftOverlay, DriftView
 from experience_engine.execution.controller import ControllerInput
 
 
@@ -34,6 +35,7 @@ def features_for(
     n_allowed_tools: int,
     actions: list[CandidateFeature],
     default_key: str,
+    overlay: DriftOverlay | None = None,
 ) -> DecisionFeatures:
     protected = is_protected(risk, definition.params.learned_risk_levels)
     mismatch = tenant_id != definition.tenant_id
@@ -56,7 +58,29 @@ def features_for(
             pcell = definition.snapshot.paired.get(paired_key(family, risk, default_key, a.key))
             if pcell is not None:
                 paired.append(PairedView(key=a.key, **pcell.model_dump()))
+    dp = definition.params.drift
+    drift: list[DriftView] = []
+    if (
+        module
+        and dp is not None
+        and dp.mode == DriftMode.ENFORCE
+        and overlay is not None
+        and not protected
+        and not mismatch
+    ):
+        for a in actions:
+            status = overlay.cells.get(paired_key(family, risk, default_key, a.key))
+            if a.key != default_key and status is not None:
+                drift.append(
+                    DriftView(
+                        key=a.key,
+                        state=status.state,
+                        seq=status.seq,
+                        probes_remaining=status.probes_remaining,
+                    )
+                )
     explores = definition.kind in (ControllerKind.BANDIT, ControllerKind.EVIDENCE_DRIVEN)
+    draws = explores or dp is not None  # recovery probes need the reproducible draw
     return DecisionFeatures(
         controller_kind=definition.kind,
         task_family=family,
@@ -72,15 +96,19 @@ def features_for(
         protected=protected,
         tenant_mismatch=mismatch,
         u=explore_draw(decision_id, definition.policy_version)
-        if explores and not protected and not mismatch
+        if draws and not protected and not mismatch
         else None,
         paired=paired,
         evidence_module=module,
+        drift=drift,
     )
 
 
 def build_features(
-    ctx: ControllerInput, definition: ControllerPolicyDefinition, snapshot_hash: str
+    ctx: ControllerInput,
+    definition: ControllerPolicyDefinition,
+    snapshot_hash: str,
+    overlay: DriftOverlay | None = None,
 ) -> DecisionFeatures:
     fs = feasible_actions(ctx.match)
     return features_for(
@@ -93,4 +121,5 @@ def build_features(
         n_allowed_tools=len(ctx.task.allowed_tools),
         actions=fs.actions,
         default_key=fs.default_key,
+        overlay=overlay,
     )

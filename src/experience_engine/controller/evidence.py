@@ -24,6 +24,7 @@ from experience_engine.domain.controller import (
     PairedCell,
     PairedView,
 )
+from experience_engine.domain.drift import PRIOR_DISABLED, DriftMode, DriftState
 from experience_engine.domain.stats import (
     newcombe_difference_bounds,
     newcombe_paired_bounds,
@@ -83,6 +84,8 @@ def assess_alternatives(f: DecisionFeatures, params: ControllerParams) -> dict[s
     conf = params.confidence
     ev = {e.key: e for e in f.evidence}
     pv = {p.key: p for p in f.paired}
+    dv = {v.key: v for v in f.drift}
+    monitor = params.drift is not None and params.drift.mode == DriftMode.ENFORCE
     d = f.default_key
     ctx_tokens = _context_tokens(ev)
     out: dict[str, Assessment] = {}
@@ -99,7 +102,11 @@ def assess_alternatives(f: DecisionFeatures, params: ControllerParams) -> dict[s
             req = None
             if lb < -delta:
                 req = required_pairs(PairedCell(**p.model_dump(exclude={"key"})), delta, conf)
-            drift = _drift(ev, p, d, k, delta, ep.drift_min_n, conf)
+            if monitor:  # the windowed monitor replaces the coarse guard
+                v = dv.get(k)
+                drift = f"evidence {v.state.value}" if v and v.state in PRIOR_DISABLED else None
+            else:
+                drift = _drift(ev, p, d, k, delta, ep.drift_min_n, conf)
             out[k] = Assessment(k, TIER_PAIRED, lb, ub, p.n, cps_alt / cps_def, drift, req)
         elif ek is not None and ed is not None and ek.n >= params.n_min and ed.n >= params.n_min:
             lb, ub = newcombe_difference_bounds(ek.successes, ek.n, ed.successes, ed.n, conf)
@@ -240,3 +247,23 @@ def explorable_evidence(
             continue
         pool.add(k)
     return sorted(pool)
+
+
+def probe_alternatives(f: DecisionFeatures, params: ControllerParams) -> list[str]:
+    """Alternatives whose cell is RECOVERING and may be probed now: a bounded fresh-evidence
+    draw, only for allow-listed families and risk levels, only within the remaining budget."""
+    dp = params.drift
+    if (
+        dp is None
+        or dp.mode != DriftMode.ENFORCE
+        or f.u is None
+        or f.risk_level not in params.exploration_risk_levels
+        or f.task_family not in params.exploration_families
+    ):
+        return []
+    feasible = {a.key for a in f.actions}
+    return sorted(
+        v.key
+        for v in f.drift
+        if v.state == DriftState.RECOVERING and v.probes_remaining > 0 and v.key in feasible
+    )

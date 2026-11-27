@@ -90,7 +90,7 @@ Every transition row: cell, previous/new state, trigger, effect, mode and `appli
 | S7 | context-specific | S2 in `timeout` only; `pool` stable |
 | S8 | runtime change | from 250 observations carry a different runtime version; outcomes unchanged |
 | S8b | evidence staleness | evidence age crosses `max_age` at 250 (1 decision = 1 hour) |
-| S9 | insufficient evidence | N=40, S2 at 15 (fewer than `min_samples` post-drift observations) and stable N=40 |
+| S9 | insufficient evidence | N=40, S2 at 15 (fewer than `min_samples` post-drift observations) and stable N=40 *(see errata E1)* |
 | S10 | misleading early observations | first 25 alternative outcomes drawn at survival 0.35, then baseline |
 
 **Seeds.** Development streams seeds `100000–100199`; held-out `7000000–7000299` (monitor-in-the-loop economics on the first 100). The seed ranges are disjoint and fixed here; thresholds are chosen on development only.
@@ -116,5 +116,14 @@ Monitor off ⇒ byte-identical M6.1 behaviour and hashes; the golden M6 hashes (
 ## 8. R-track (fresh real-model stream)
 One fresh real-model held-out stream (`timeout`, 240 tasks, arms A and E, new unrecorded seed, same stress portfolio and model as M6.1) is replayed with the M6.1 V-timeout prior (historical evidence, a different seed) and the *calibrated, frozen* monitor: S1 (stable: false alarms on real outcome noise) and S2/S4/S5 overlays on the real table (20 seeded orders). Reported as secondary: it checks the monitor on non-synthetic noise; the overlays remain synthetic.
 
-## 9. Calibration outcome
+## 9. Errata (made after a smoke run on 8 development seeds with placeholder thresholds, before any calibration or held-out data)
+
+The smoke run exercised the code path only; no threshold was chosen from it. It exposed four defects of the *protocol*, each fixable by arithmetic rather than by looking for a favourable result:
+
+* **E1 (S9b).** "S2 at 15 of N=40" leaves 25 post-drift observations, not fewer than `min_samples=20`. S9b is now N=40 with the drift at 25 (15 post-drift observations).
+* **E2 (S10).** Survival 0.35 for 25 observations (success ≈ 0.18 against 0.52) is a severe transient, not a misleading one: any detector with a 95% bound alarms on it. S10 now uses survival 0.70 (success ≈ 0.36, the kind of early bad luck a 25-sample window shows about 5% of the time) with ground truth "no drift"; the severe version is kept as **S10b** (ground truth: material during 0–25), informational, no acceptance criterion.
+* **E3 (recovery arithmetic).** With `probe_rate 0.10`, 30 fresh probes need ≈ 300 decisions after RECOVERING begins (plus `min_quarantine 50`), so criterion (f) "within 300 decisions of the drift ending" was unattainable by construction. `probe_rate` is raised to **0.25** (still bounded by `probe_budget 150` and the exploration allow-list) and criterion (f) becomes: **≥ 70% of S5 streams are back to NORMAL by the end of the stream (400 decisions after the drift ends)**, with at most one quarantine episode per stream in S1/S6.
+* **E4 (calibration fallback).** If no grid point meets the §6.1 false-alarm constraints, the most conservative grid point (`confidence 0.999`, `persistence 10`) is frozen and the failure to reach the constraints is itself a reported result.
+
+## 10. Calibration outcome
 *(appended after the development run, before the held-out run)*
