@@ -223,3 +223,32 @@ def test_a_stable_stream_is_not_disturbed_and_matches_m61_exactly() -> None:
     a = run_stream(s.tasks, order, _cfg(s, "m61"), label="y").steps
     b = run_stream(s.tasks, order, _cfg(s, "m62"), label="y").steps
     assert [(x.chosen, x.status) for x in a] == [(x.chosen, x.status) for x in b]
+
+
+# ---- rollout gates: the monitor cannot bypass the existing safeguards ------------------------
+def test_the_offline_gate_reports_the_monitor_and_refuses_unbacked_configurations() -> None:
+    from experience_engine.controller.gates import evaluate_offline
+    from experience_engine.domain.evaluation import Verdict
+
+    d = defn("ENFORCE")
+    rep = evaluate_offline(d, [])
+    assert rep.metrics["drift_mode"] == "ENFORCE" and rep.metrics["drift_detector"] == "WINDOW"
+    assert rep.metrics["drift_config_hash"] == d.params.drift.config_hash()  # type: ignore[union-attr]
+    assert rep.verdict != Verdict.PASS  # no logged decisions: the existing evidence gates hold
+    bare = evidence_definition(
+        None, kind=ControllerKind.EVIDENCE_DRIVEN, drift={"mode": "ENFORCE"}, epsilon=0.1
+    )
+    assert any("no paired prior" in r for r in evaluate_offline(bare, []).reasons)
+    strict = evidence_definition(
+        CELL, kind=ControllerKind.EVIDENCE_DRIVEN, drift={"mode": "SHADOW"},
+        evidence={"require_production_eligible": True},
+    )  # fmt: skip
+    bad = evaluate_offline(strict, [])  # the helper's source is not a promotion evaluation
+    assert bad.verdict == Verdict.FAIL and any("not production-eligible" in r for r in bad.reasons)
+    assert bad.metrics["prior_sources_ineligible"] == 1
+
+
+def test_enforcement_changes_the_definition_hash_so_it_needs_its_own_promotion_evidence() -> None:
+    shadow, enforce = defn("SHADOW"), defn("ENFORCE")
+    assert shadow.definition_hash() != enforce.definition_hash()
+    assert shadow.snapshot.snapshot_hash() == enforce.snapshot.snapshot_hash()  # same evidence

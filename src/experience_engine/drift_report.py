@@ -227,6 +227,38 @@ def report(loop: str, monitor: str, cusum: str | None, extra: dict[str, str]) ->
         )
     out.append("")
 
+    # ---- precision / recall ---------------------------------------------------------------------
+    tp = fp = fn = tn = 0
+    n_dec = 0
+    fa_events = 0
+    for sid, v in M.items():
+        if sid == "S10b":  # informational scenario: no acceptance, reported separately
+            continue
+        for r in v["monitor"]:
+            n_dec += r.n
+            truth = any(f.onset is not None and f.exposed for f in r.families)
+            alarmed = any(f.first_detection is not None for f in r.families)
+            false_alarm = any(f.false_alarms for f in r.families)
+            fa_events += sum(f.false_alarms for f in r.families)
+            tp += truth and alarmed
+            fn += truth and not alarmed
+            fp += false_alarm
+            tn += (not truth) and not false_alarm
+    out += [
+        "## Drift precision and recall (monitor-only, pooled over S1-S10, S10b excluded)",
+        "",
+        f"A stream is a *positive* when its ground truth has at least 50 materially wrong "
+        f"positions; a *true alarm* is a DRIFTED transition after the onset; a *false alarm* is a "
+        f"DRIFTED transition at a position where the evidence is not materially wrong. Streams: "
+        f"{tp + fn + fp + tn}; true positives {tp}, false negatives {fn}, streams with a false "
+        f"alarm {fp}, clean negatives {tn}. **Recall {tp / max(1, tp + fn):.1%}**, "
+        f"**precision {tp / max(1, tp + fp):.1%}** (stream-level; a stream with both a late true "
+        f"alarm and an early false one counts in both), false alarm events per 1,000 decisions "
+        f"{1000 * fa_events / max(1, n_dec):.3f}. The ground truth is synthetic: these are "
+        f"properties of the frozen scenarios, not of production drift.",
+        "",
+    ]
+
     # ---- economics ------------------------------------------------------------------------------
     lam = int(round(1 / UTILITY_LAMBDA))
     out += [
