@@ -20,7 +20,7 @@ class Script:
         self,
         verdict: Callable[[int], TrialVerdict] | TrialVerdict,
         *,
-        tokens: int = 6000,
+        tokens: int | Callable[[int], int] = 6000,
         runtime: str | None = "rt-1",
         verifier: str | None = "v-1",
         tenant: str = "bench",
@@ -50,7 +50,7 @@ class Script:
         self.calls += 1
         fields: dict[str, Any] = {
             "verdict": self.verdict(n),
-            "tokens": self.tokens,
+            "tokens": self.tokens(n) if callable(self.tokens) else self.tokens,
             "task_ref": f"t{n}",
             "observed_at": at,
             "runtime_version": self.runtime,

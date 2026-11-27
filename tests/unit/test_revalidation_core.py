@@ -50,6 +50,7 @@ from experience_engine.domain.revalidation import (
     RevalTransition,
     RevalTrial,
     RevalTrigger,
+    TrialResult,
     TrialVerdict,
 )
 from revalidation_support import Script
@@ -242,11 +243,13 @@ def test_only_an_explicitly_verified_pass_is_a_success() -> None:
     assert classify_run_outcome(ok, [vr(True)]) == TrialVerdict.SUCCESS
     assert classify_run_outcome(ok, [vr(True), vr(None)]) == TrialVerdict.VERIFICATION_UNAVAILABLE
     assert classify_run_outcome(ok, []) == TrialVerdict.FAILURE  # no goal evidence: not a success
+    assert classify_run_outcome(ok, [vr(True), vr(False)]) == TrialVerdict.FAILURE  # every goal
     assert classify_run_outcome(OutcomeStatus.UNKNOWN, [vr(True)]) == U
     assert classify_run_outcome(OutcomeStatus.PARTIAL, [vr(True)]) == TrialVerdict.FAILURE
     assert classify_run_outcome(ok, [vr(True)], timed_out=True) == TrialVerdict.TIMEOUT
     assert classify_run_outcome(ok, [vr(True)], invalid_output=True) == TrialVerdict.INVALID_OUTPUT
     assert classify_run_outcome(OutcomeStatus.FAILURE, [vr(False)]) == TrialVerdict.FAILURE
+    assert classify_run_outcome(OutcomeStatus.FAILURE, [vr(True)]) == TrialVerdict.FAILURE
 
 
 def test_unavailable_trials_are_never_successes_and_can_never_recover() -> None:
@@ -459,6 +462,46 @@ def test_no_recovery_from_time_alone() -> None:
     assert case.state != RevalState.RECOVERED
 
 
+# ---- verdict semantics and the exact decision boundary ------------------------------------------
+@pytest.mark.parametrize(
+    "verdict", [TrialVerdict.TIMEOUT, TrialVerdict.INVALID_OUTPUT, TrialVerdict.FAILURE]
+)
+def test_timeouts_and_invalid_outputs_are_counted_failures_never_successes(
+    verdict: TrialVerdict,
+) -> None:
+    assert not TrialResult(verdict=verdict, tokens=1, task_ref="x", observed_at=T0).success
+    assert TrialResult(verdict=verdict, tokens=1, task_ref="x", observed_at=T0).counted
+    assert not TrialResult(verdict=U, tokens=1, task_ref="x", observed_at=T0).counted
+    _, ts, _, _ = drive(open_case(), rp(RevalStrategy.SEQUENTIAL), Script(verdict), 1)
+    failed = next(t for t in ts if t.trigger == RevalTrigger.CRITERIA_NOT_MET)
+    assert failed.measurements["k"] == 0 and failed.measurements["n"] >= 5  # in n, not in k
+
+
+def test_the_fixed_test_recovers_at_exactly_the_critical_value_and_not_one_below() -> None:
+    plan = plan_fixed(*hypotheses(ref(0.5), 0.10), 0.05, 0.20, 320)
+    assert plan is not None
+
+    def outcome(successes: int) -> list[str]:
+        script = Script(lambda n: S if n < successes else F)
+        _, ts, _, _ = drive(open_case(), rp(RevalStrategy.FIXED, confirm_trials=0), script, 8)
+        return triggers(ts)
+
+    assert "CRITERIA_MET" in outcome(plan.k_crit)
+    below = outcome(plan.k_crit - 1)
+    assert "CRITERIA_NOT_MET" in below and "CRITERIA_MET" not in below
+
+
+def test_the_final_cost_guard_vetoes_a_pass_that_futility_could_not_see() -> None:
+    noisy = Script(S, tokens=lambda n: 2_000 if n % 2 else 12_000)  # mean 7,000: +16.7 %
+    _, ts, trials, _ = drive(open_case(), rp(RevalStrategy.FIXED), noisy, 8)
+    fail = next(t for t in ts if t.trigger == RevalTrigger.CRITERIA_NOT_MET)
+    assert fail.detail == ["cost guard failed"] and fail.measurements["k"] == fail.measurements["n"]
+    assert RevalState.RECOVERED not in {t.to_state for t in ts}
+    fine = Script(S, tokens=lambda n: 4_000 if n % 2 else 8_000)  # mean 6,000: on the reference
+    done, _, _, _ = drive(open_case(), rp(RevalStrategy.FIXED), fine, 12)
+    assert done.state == RevalState.RECOVERED
+
+
 # ---- lineage ------------------------------------------------------------------------------------
 def test_trials_that_break_lineage_are_rejected_recorded_and_not_counted() -> None:
     over = {
@@ -668,6 +711,9 @@ def test_another_tenants_observations_and_executor_never_enter_a_case() -> None:
     fleet.ingest(other)
     assert fleet.cases == {} and fleet.monitor.states[CELL].n_alt == 0
     degrade(fleet, 1000, 150)
+    before = fleet.cases[CELL].dwell
+    fleet.ingest([rec(2000 + i, "timeout", DEF, True, tenant="other") for i in range(60)])
+    assert fleet.cases[CELL].dwell == before  # a foreign tenant's decisions are not our dwell
     foreign = Script(S, tenant="other")
     fleet.step(foreign, "d-01149", T0 + hours(1200))
     assert foreign.calls == 0 and fleet.spent.get(CELL, 0) == 0
@@ -742,3 +788,31 @@ def test_a_replay_source_never_invents_a_trial() -> None:
     missing = stored.key.model_copy(update={"ordinal": 99_999})
     assert src.run(ref(0.5), missing, stored.result.observed_at) is None
     assert src.facts(ref(0.5), T0 - hours(1)).tenant_id == "bench"  # before any record: default
+
+
+def test_a_structural_restoration_rebases_the_monitor_so_the_new_version_is_not_an_alarm() -> None:
+    fleet = new_fleet(RevalStrategy.FIXED, dwell=10)
+    rng = random.Random(4)
+    rt2 = [
+        rec(i, "timeout", ALT, rng.random() < 0.5).model_copy(update={"runtime_version": "rt-2"})
+        for i in range(200)
+    ]
+    fleet.ingest(rt2)  # the capability works, but under another runtime than its evidence
+    case = fleet.cases[CELL]
+    assert case.reason == QuarantineReason.STRUCTURAL_INVALIDATION
+    i = defaults(fleet, 200, 30)
+    script = Script(S, runtime="rt-2")
+    for k in range(14):
+        fleet.step(script, f"d-{i - 1:05d}", T0 + hours(i + 10 * (k + 1)))
+    assert fleet.cases[CELL].state == RevalState.RECOVERED
+    assert fleet.monitor.refs[CELL].runtime_version == "rt-2"  # the monitor's reference moved
+    more = [
+        rec(i + j, "timeout", ALT, rng.random() < 0.5).model_copy(
+            update={"runtime_version": "rt-2"}
+        )
+        for j in range(120)
+    ]
+    fleet.ingest(more)
+    st = fleet.monitor.states[CELL]
+    assert st.state in (DriftState.NORMAL, DriftState.SUSPECT) and st.episode == 1
+    assert all(w[2] for w in st.window)  # every observation is compatible with the new reference
