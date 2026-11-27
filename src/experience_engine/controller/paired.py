@@ -147,3 +147,56 @@ def required_pairs(
             return m
         m += step
     return None
+
+
+@dataclass(frozen=True)
+class ResolutionRow:
+    key: str
+    n: int
+    draws: int
+    p_admissible: float  # lower bound >= -delta: the alternative is proven non-inferior
+    p_worse: float  # upper bound < -delta: proven inferior
+    p_unresolved: float
+
+
+def resolution_curve(
+    tasks: "Sequence[TaskOutcome]",
+    sizes: Sequence[int],
+    *,
+    draws: int,
+    delta: float,
+    confidence: float,
+    seed: int = SUBSAMPLE_SEED,
+) -> list[ResolutionRow]:
+    """How often an independent validation of `n` paired tasks would resolve each cell.
+
+    Each draw resamples `n` tasks with replacement from the recorded pairs (their empirical
+    distribution stands in for the population), builds the 2x2 table and applies the same paired
+    bound the policy uses. Descriptive planning evidence about validation size; it uses no live or
+    held-out data.
+    """
+    from experience_engine.domain.stats import newcombe_paired_bounds
+
+    groups: dict[str, list[TaskOutcome]] = {}
+    for t in tasks:
+        for k in t.outcomes:
+            if k != t.default_key:
+                groups.setdefault(paired_key(t.family, t.risk, t.default_key, k), []).append(t)
+    rng = random.Random(seed)
+    rows: list[ResolutionRow] = []
+    for key, group in sorted(groups.items()):
+        for n in sizes:
+            ok = worse = 0
+            for _ in range(draws):
+                cell = build_paired_cells(rng.choices(group, k=n)).get(key)
+                if cell is None or cell.n == 0:
+                    continue
+                lo, hi = newcombe_paired_bounds(
+                    cell.both, cell.alt_only, cell.default_only, cell.neither, confidence
+                )
+                ok += lo >= -delta
+                worse += hi < -delta
+            rows.append(
+                ResolutionRow(key, n, draws, ok / draws, worse / draws, 1 - (ok + worse) / draws)
+            )
+    return rows

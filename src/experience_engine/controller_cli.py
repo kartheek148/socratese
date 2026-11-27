@@ -7,6 +7,7 @@
   ee-ctl rollback | reject | status | replay
   ee-ctl simulate   --heldout NAME RESULTS ... [--prior RESULTS ...] --out report.md
                                                                   (offline, full-information)
+  ee-ctl prior-curve --prior RESULTS ... --sizes 30 60 120 240     (validation size vs resolution)
   ee-ctl paired-run --portfolio good|heterogeneous|drifted ...      (real model, arms A and E)
   ee-ctl live       --policy-id P --portfolio ...                   (registry-driven shadow/canary)
 
@@ -38,6 +39,7 @@ from experience_engine.bench.verifier import SimulationVerifier
 from experience_engine.controller.datasets import (
     EnvReport,
     from_experiment,
+    load_paired,
     load_prior,
     with_protected_share,
 )
@@ -48,15 +50,16 @@ from experience_engine.controller.gates import (
     evaluate_offline,
     evaluate_shadow,
 )
-from experience_engine.controller.paired import PairedPrior, version_problems
+from experience_engine.controller.paired import PairedPrior, resolution_curve, version_problems
 from experience_engine.controller.registry import ControllerPolicyRegistry, ControllerRegistryError
 from experience_engine.controller.replay import replay_decision
 from experience_engine.controller.report import SimEntry, SimSet, render_sim_report
 from experience_engine.controller.rollout import build_rollout
-from experience_engine.controller.simulate import SimConfig, evaluate, rule_log
+from experience_engine.controller.simulate import SimConfig, SimDrift, evaluate, rule_log
 from experience_engine.controller_fixtures import portfolio
 from experience_engine.domain.benchmark import AgentConfig, DatasetVersion, Split
 from experience_engine.domain.controller import (
+    PLANNING_KEY,
     ControllerKind,
     ControllerParams,
     ControllerPolicyDefinition,
@@ -114,7 +117,8 @@ def _params(
         raw["exploration_risk_levels"] = ["low"] if args.explore_families else []
         raw["epsilon"] = args.epsilon
     if with_evidence or kind == "evidence":
-        raw["evidence"] = {}  # the frozen evidence-module defaults
+        drift_min_n = getattr(args, "drift_min_n", None)
+        raw["evidence"] = {} if drift_min_n is None else {"drift_min_n": drift_min_n}
     return ControllerParams.model_validate(raw)
 
 
@@ -376,6 +380,11 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
                 _params(args, kind=base, with_evidence=with_prior),
                 refresh_every=args.refresh_every,
                 prior=prior if with_prior else None,
+                drift=SimDrift(
+                    int(args.drift_start * len(tasks)), PLANNING_KEY, args.drift_survival
+                )
+                if args.drift_start
+                else None,
             )
             cmp, _ = evaluate(
                 tasks,
@@ -433,6 +442,39 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
             )
         )
     print(f"wrote {args.out}")
+    return 0
+
+
+def _cmd_prior_curve(args: argparse.Namespace) -> int:
+    params = ControllerParams()
+    tasks, sources = load_paired(args.prior, families=args.families)
+    rows = resolution_curve(
+        tasks,
+        args.sizes,
+        draws=args.draws,
+        delta=params.delta[args.risk],
+        confidence=params.confidence,
+        seed=args.seed,
+    )
+    lines = [
+        "# Prior validation size: how often does a paired prior resolve? (generated)",
+        "",
+        f"Sources: {', '.join(s.name for s in sources)}; {len(tasks)} paired tasks; margin "
+        f"delta={params.delta[args.risk]}, one-sided confidence {params.confidence}; {args.draws} "
+        f"bootstrap draws of n tasks (with replacement) per row, seed {args.seed}. Descriptive: the "
+        "recorded pairs stand in for the population; no held-out or live data is used.",
+        "",
+        "| cell | n paired tasks | P(proven non-inferior) | P(proven worse) | P(unresolved) |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [
+        f"| `{r.key}` | {r.n} | {r.p_admissible:.2f} | {r.p_worse:.2f} | {r.p_unresolved:.2f} |"
+        for r in rows
+    ]
+    text = "\n".join(lines) + "\n"
+    if args.out:
+        Path(args.out).write_text(text)
+    print(text)
     return 0
 
 
@@ -674,6 +716,19 @@ def main(argv: list[str] | None = None) -> int:
         help="held-out arm A/E files for the paired prior of the '+prior' kinds",
     )
     sm.add_argument("--prior-subsample", type=int, default=0, help="keep N tasks per family")
+    sm.add_argument(
+        "--drift-start",
+        type=float,
+        default=0.0,
+        help="SYNTHETIC: fraction of the stream after which planning's observed successes degrade",
+    )
+    sm.add_argument("--drift-survival", type=float, default=0.2)
+    sm.add_argument(
+        "--drift-min-n",
+        type=int,
+        default=None,
+        help="live outcomes before the evidence drift guard acts (default 30; huge = guard off)",
+    )
     sm.add_argument("--prior-subsample-families", nargs="*", default=None)
     sm.add_argument("--warm", nargs="*", default=None, help="recorded runs used as a rule-only log")
     sm.add_argument("--kinds", nargs="+", choices=SIM_KINDS, default=["cost_aware", "bandit"])
@@ -698,6 +753,18 @@ def main(argv: list[str] | None = None) -> int:
     sm.add_argument("--out", required=True)
     sm.add_argument("--json-out", default=None)
     sm.set_defaults(func=_cmd_simulate)
+
+    pc = sub.add_parser(
+        "prior-curve", help="how often a paired prior of n validation tasks resolves a cell"
+    )
+    pc.add_argument("--prior", nargs="+", required=True, metavar="RESULTS")
+    pc.add_argument("--families", nargs="*", default=None)
+    pc.add_argument("--sizes", nargs="+", type=int, default=[30, 60, 120, 240, 360])
+    pc.add_argument("--draws", type=int, default=1000)
+    pc.add_argument("--risk", choices=["low", "medium"], default="low")
+    pc.add_argument("--seed", type=int, default=20260602)
+    pc.add_argument("--out", default=None)
+    pc.set_defaults(func=_cmd_prior_curve)
 
     pr = sub.add_parser("paired-run", help="real-model arms A and E over a stress portfolio")
     _stream(pr)

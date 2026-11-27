@@ -217,6 +217,22 @@ def describe(tasks: Sequence[TaskOutcome]) -> dict[str, dict[str, tuple[int, flo
     }
 
 
+def load_paired(
+    paths: Sequence[str | Path], *, families: Sequence[str] | None = None
+) -> tuple[list[TaskOutcome], list[PairedSource]]:
+    """Task-level A-vs-E pairs of held-out experiment files (task ids prefixed per file)."""
+    tasks: list[TaskOutcome] = []
+    sources: list[PairedSource] = []
+    for i, path in enumerate(paths):
+        result = ExperimentResult.model_validate_json(Path(path).read_text())
+        part, src = paired_tasks(
+            result, name=Path(path).name, families=families, id_prefix=f"p{i}:"
+        )
+        tasks += part
+        sources.append(src)
+    return tasks, sources
+
+
 def load_prior(
     paths: Sequence[str | Path],
     *,
@@ -231,13 +247,7 @@ def load_prior(
     `subsample_n` keeps a seeded random `subsample_n` tasks per family (the sample-size curve); the
     provenance is recomputed for what is actually kept.
     """
-    tasks: list[TaskOutcome] = []
-    sources: list[PairedSource] = []
-    for i, path in enumerate(paths):
-        result = ExperimentResult.model_validate_json(Path(path).read_text())
-        t, src = paired_tasks(result, name=Path(path).name, families=families, id_prefix=f"p{i}:")
-        tasks += t
-        sources.append(src)
+    tasks, sources = load_paired(paths, families=families)
     if subsample_n:
         kept: list[TaskOutcome] = []
         for fam in sorted({t.family or "" for t in tasks}):

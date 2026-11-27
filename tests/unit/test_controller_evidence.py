@@ -1,5 +1,6 @@
 """M6.1 unit tests: paired bound, hash stability, paired priors, evidence-driven policy."""
 
+import json
 import math
 from pathlib import Path
 
@@ -22,17 +23,24 @@ from controller_support import (
     source,
     task,
 )
-from experience_engine.controller.datasets import paired_tasks
+from experience_engine.controller.datasets import load_prior, paired_tasks
 from experience_engine.controller.paired import (
     build_paired_cells,
     make_prior,
     required_pairs,
+    resolution_curve,
     subsample,
     version_problems,
 )
 from experience_engine.controller.policy import AdaptiveController
 from experience_engine.controller.replay import replay_decision
-from experience_engine.controller.simulate import SimConfig, Verdict, compare, run_sequence
+from experience_engine.controller.simulate import (
+    SimConfig,
+    SimDrift,
+    Verdict,
+    compare,
+    run_sequence,
+)
 from experience_engine.domain.controller import (
     CONTROLLER_KEY,
     ControllerKind,
@@ -268,6 +276,91 @@ def test_priors_refuse_discovery_data_and_collapse_repetitions_by_majority() -> 
     assert t3 == [] and s3.n_unknown_dropped == 60
 
 
+def test_subsampled_prior_recomputes_its_provenance() -> None:
+    path = Path(__file__).resolve().parents[2] / "docs/evaluations/data/m6-s3-d2-development.json"
+    full = load_prior([path], families=["timeout"])
+    part = load_prior([path], families=["timeout"], subsample_n=30)
+    (cell,) = part.cells.values()
+    (src,) = part.sources
+    assert cell.n == src.n_pairs == 30 and full.sources[0].n_pairs == 60
+    assert src.tasks_sha256 != full.sources[0].tasks_sha256
+    assert src.validation_tokens == cell.default_tokens + cell.alt_tokens
+    again = load_prior([path], families=["timeout"], subsample_n=30)
+    assert again.sources[0].tasks_sha256 == src.tasks_sha256  # seeded: reproducible
+    only_pool = load_prior([path], families=["timeout"], subsample_n=30, subsample_families=["x"])
+    assert next(iter(only_pool.cells.values())).n == 60  # other families are left whole
+
+
+def test_resolution_curve_grows_with_validation_size_and_is_reproducible() -> None:
+    equal = correlated_world(400, {PLANNING_KEY: 0.5, CAP_KEY: 0.5}, COST_STALE, seed=3, rho=0.5)
+    rows = resolution_curve(equal, [30, 120, 480], draws=300, delta=0.10, confidence=0.95, seed=1)
+    p = [r.p_admissible for r in rows]
+    assert p[0] < p[1] < p[2] and p[2] > 0.7 and all(r.p_worse < 0.05 for r in rows)
+    assert all(abs(r.p_admissible + r.p_worse + r.p_unresolved - 1.0) < 1e-9 for r in rows)
+    assert rows == resolution_curve(
+        equal, [30, 120, 480], draws=300, delta=0.10, confidence=0.95, seed=1
+    )
+    worse = correlated_world(400, {PLANNING_KEY: 0.2, CAP_KEY: 0.8}, COST_STALE, seed=3)
+    assert resolution_curve(worse, [120], draws=100, delta=0.10, confidence=0.95)[0].p_worse > 0.99
+
+
+def test_synthetic_drift_degrades_only_the_named_action_after_its_start() -> None:
+    world = correlated_world(120, {PLANNING_KEY: 1.0, CAP_KEY: 1.0}, COST_STALE, seed=4)
+    prior = prior_of(correlated_world(240, RATES_STALE, COST_STALE, seed=1, prefix="v"))
+    base = _cfg(ControllerKind.EVIDENCE_DRIVEN, prior)
+    order = list(range(120))
+    plain = run_sequence(world, order, base, label="p")
+    drifted = run_sequence(
+        world,
+        order,
+        SimConfig(base.kind, base.params, prior=prior, drift=SimDrift(60, PLANNING_KEY, 0.0)),
+        label="d",
+    )
+    assert [s.success for s in plain] == [True] * 120  # no drift: unchanged
+    assert [s.success for s in drifted[:60]] == [True] * 60  # nothing before the start
+    after = drifted[60:]
+    assert any(s.chosen == PLANNING_KEY for s in after)
+    assert all((not s.success) == (s.chosen == PLANNING_KEY) for s in after)  # only that action
+    assert [s.default_success for s in drifted] == [True] * 120  # the baseline's truth is untouched
+
+
+def test_cli_simulate_with_a_prior_and_prior_curve(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from experience_engine import controller_cli
+
+    data = Path(__file__).resolve().parents[2] / "docs/evaluations/data/m6-s3-d2-development.json"
+    out, js = tmp_path / "r.md", tmp_path / "r.json"
+    args = ["simulate", "--heldout", "d2", str(data), "--families", "timeout", "--orders", "2"]
+    with pytest.raises(SystemExit, match="needs --prior"):
+        controller_cli.main([*args, "--kinds", "evidence+prior", "--out", str(out)])
+    code = controller_cli.main(
+        [*args, "--kinds", "evidence+prior", "evidence", "--prior", str(data)]
+        + [
+            "--prior-subsample",
+            "40",
+            "--drift-start",
+            "0.5",
+            "--out",
+            str(out),
+            "--json-out",
+            str(js),
+        ]
+    )
+    assert code == 0 and "Per-family verdicts" in out.read_text()
+    assert "Paired prior" in out.read_text() and "n=40" in out.read_text()
+    fams = json.loads(js.read_text())["d2"]["evidence+prior"]["families"]
+    assert set(fams) == {"timeout"} and fams["timeout"]["verdict_cell"] in {
+        v.value for v in Verdict
+    }
+    capsys.readouterr()
+    code = controller_cli.main(
+        ["prior-curve", "--prior", str(data), "--sizes", "30", "60", "--draws", "20"]
+    )
+    text = capsys.readouterr().out
+    assert code == 0 and "P(proven non-inferior)" in text and "| 30 |" in text and "| 60 |" in text
+
+
 def test_version_problems_block_a_stale_source() -> None:
     s = source()
     assert version_problems(s, "rt", "v") == []
@@ -385,6 +478,8 @@ def test_protected_classes_never_read_priors() -> None:
     other = evidence_definition(cell)  # a foreign tenant's task gets the rule decision as well
     d = AdaptiveController(other).decide(ctx(task("low", "pool", tenant="other"), match_with(CAP)))
     assert d.selected_action == Strategy.DIRECT_CAPABILITY
+    f = DecisionFeatures.model_validate(d.feature_snapshot[CONTROLLER_KEY])
+    assert f.tenant_mismatch and f.paired == [] and f.evidence == [] and f.u is None
 
 
 # ---- drift guard --------------------------------------------------------------------------------
@@ -465,6 +560,29 @@ def test_exploration_stops_once_resolved_or_hopeless(
 ) -> None:
     seen = _probs(_live(planning))
     assert len(seen) == 1 and next(iter(seen.values())) == 1.0, why
+
+
+def test_an_alternative_that_cannot_save_enough_is_not_explored_even_if_it_is_reliable() -> None:
+    # same reliability as the default (85%) but costlier per run: more trials cannot make it pay
+    costly = _probs(_live((20, 17, 20 * 8000)))
+    assert set(costly) == {CAP_KEY}
+    cheap = _probs(_live((20, 17, 20 * 3000)))
+    assert PLANNING_KEY in cheap  # the identical reliability at a third of the cost is worth a look
+
+
+def test_nothing_is_explored_before_the_default_has_enough_live_evidence() -> None:
+    thin = {CAP_KEY: (20, 17, 20 * 6000), PLANNING_KEY: (10, 9, 10 * 2000)}
+    defn = evidence_definition(
+        None,
+        live=thin,
+        kind=ControllerKind.EVIDENCE_DRIVEN,
+        exploration_risk_levels=["low"],
+        exploration_families=["pool"],
+        epsilon=0.2,
+        min_total_verified=0,
+    )
+    seen = _probs(defn, 200)
+    assert set(seen) == {CAP_KEY} and seen[CAP_KEY] == 1.0  # the default's cost is not yet known
 
 
 def test_exploration_budget_is_bounded_by_the_evidence_requirement() -> None:

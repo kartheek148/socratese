@@ -8,6 +8,7 @@ baseline always plays the default action. One recorded draw per task and action:
 stochastic process, it is not a repeated measurement.
 """
 
+import hashlib
 import random
 from collections import defaultdict
 from collections.abc import Sequence
@@ -51,6 +52,22 @@ class TaskOutcome:
 
 
 @dataclass(frozen=True)
+class SimDrift:
+    """A synthetic, labelled regime change: from stream position `start` on, each success of
+    `action` that the controller observes survives with probability `survival`. The rule
+    baseline's recorded outcomes are not touched."""
+
+    start: int
+    action: str
+    survival: float
+
+
+def _unit(label: str, index: int) -> float:
+    digest = hashlib.sha256(f"drift|{label}|{index}".encode()).hexdigest()
+    return int(digest[:8], 16) / 0x1_0000_0000
+
+
+@dataclass(frozen=True)
 class SimConfig:
     kind: ControllerKind
     params: ControllerParams
@@ -61,6 +78,7 @@ class SimConfig:
     train_window: int | None = None
     # M6.1: paired validation prior carried by every published snapshot (never a live record)
     prior: PairedPrior | None = None
+    drift: SimDrift | None = None
 
 
 @dataclass(frozen=True)
@@ -176,6 +194,15 @@ def run_sequence(
         choice = choose(f, cfg.params)
         status, tokens = t.outcomes[choice.selected_key]
         d_status, d_tokens = t.outcomes[t.default_key]
+        drift = cfg.drift
+        if (
+            drift is not None
+            and i >= drift.start
+            and choice.selected_key == drift.action
+            and status == OutcomeStatus.VERIFIED_SUCCESS
+            and _unit(label, i) >= drift.survival
+        ):
+            status = OutcomeStatus.FAILURE
         records.append(
             DecisionOutcomeRecord(
                 decision_id=f"{label}-{i}",
