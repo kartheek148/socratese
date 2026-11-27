@@ -118,7 +118,9 @@ M6.2 quarantines a cell whose evidence stopped being trustworthy and lets it bac
 uv run ee-ctl reval-sim --seed-start 9000000 --seeds 100 --json-out heldout.json     # the frozen experiment (synthetic)
 uv run ee-ctl reval-report --results heldout.json [--repro again.json] --out report.md  # pre-registered acceptance + verdict, computed
 uv run ee-ctl reval-status | reval-evaluate | reval-replay --version N                # persisted cases, sync, verification
+uv run ee-ctl reval-real --prior m61-vt_*.json --root PUB --private-root PRIV --workers 8 --out case.json  # EXPLORATORY: one real-model case
 ```
+`reval-sim --horizon N` and `--set KEY=VALUE` / `--drift-set KEY=VALUE` are **exploratory** overrides for development seeds; the frozen configuration is the default.
 
 ## Commands
 
