@@ -96,6 +96,10 @@ def _cmd_real(args: argparse.Namespace) -> int:
     from experience_engine.controller.drift import references_from_snapshot
     from experience_engine.controller.estimator import build_snapshot
     from experience_engine.controller.revalidation import CaseState, step_case
+    from experience_engine.controller.revalidation_runtime import (
+        OrchestratorTrialSource,
+        RevalidationTask,
+    )
     from experience_engine.domain.benchmark import AgentConfig
     from experience_engine.domain.controller import ControllerParams
     from experience_engine.domain.revalidation import (
@@ -106,10 +110,6 @@ def _cmd_real(args: argparse.Namespace) -> int:
     from experience_engine.eval_cli import _build_llm
     from experience_engine.execution.orchestrator import TaskOrchestrator
     from experience_engine.execution.protocol import PROMPT_VERSION
-    from experience_engine.execution.revalidation import (
-        OrchestratorTrialSource,
-        RevalidationTask,
-    )
 
     prior = load_prior(args.prior, families=args.families)
     snap = build_snapshot([], args.tenant, ControllerParams.model_validate({"evidence": {}}),

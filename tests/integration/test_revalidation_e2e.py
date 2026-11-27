@@ -256,13 +256,13 @@ def test_trials_run_through_the_orchestrator_and_verifier_without_creating_produ
     from experience_engine.bench.environment import SimulatedEnvironment
     from experience_engine.bench.verifier import SimulationVerifier
     from experience_engine.controller.drift import parse_paired_key, references_from_snapshot
-    from experience_engine.execution.orchestrator import TaskOrchestrator
-    from experience_engine.execution.revalidation import (
+    from experience_engine.controller.revalidation_runtime import (
         FORCED_POLICY_VERSION,
         ForcedController,
         OrchestratorTrialSource,
         RevalidationTask,
     )
+    from experience_engine.execution.orchestrator import TaskOrchestrator
 
     d = drift_definition(1, "ENFORCE")
     ref = references_from_snapshot(d.snapshot)[0]
@@ -307,8 +307,11 @@ def test_a_foreign_tenants_tasks_are_never_in_the_pool() -> None:
     from experience_engine.bench.environment import SimulatedEnvironment
     from experience_engine.bench.verifier import SimulationVerifier
     from experience_engine.controller.drift import references_from_snapshot
+    from experience_engine.controller.revalidation_runtime import (
+        OrchestratorTrialSource,
+        RevalidationTask,
+    )
     from experience_engine.execution.orchestrator import TaskOrchestrator
-    from experience_engine.execution.revalidation import OrchestratorTrialSource, RevalidationTask
 
     ref = references_from_snapshot(drift_definition(1, "ENFORCE").snapshot)[0]
     own = pool_tasks(2)
@@ -356,8 +359,11 @@ def test_prefetched_trials_are_served_in_order_stamped_when_consumed_and_disclos
     from experience_engine.bench.environment import SimulatedEnvironment
     from experience_engine.bench.verifier import SimulationVerifier
     from experience_engine.controller.drift import references_from_snapshot
+    from experience_engine.controller.revalidation_runtime import (
+        OrchestratorTrialSource,
+        RevalidationTask,
+    )
     from experience_engine.execution.orchestrator import TaskOrchestrator
-    from experience_engine.execution.revalidation import OrchestratorTrialSource, RevalidationTask
 
     ref = references_from_snapshot(drift_definition(1, "ENFORCE").snapshot)[0]
     pool = [

@@ -172,6 +172,8 @@ uv run ee-ctl reval-report --results heldout.json --repro heldout2.json --out re
 7. **Single-cell, single-tenant.** No pooled or multi-family monitors; no automatic capability retirement or regeneration; no latency channel.
 8. **No live shadow or canary** of an M6.3 policy, and no real-model *acceptance* experiment: the real-model case (§13) is one exploratory case.
 9. **No multiplicity correction** across the ten scenarios (descriptive tables; the pre-registered criteria are the pooled ones).
+10. **Two of the brief's eligibility inputs are not gates.** *Evidence provenance*: whether the prior itself is production-eligible is checked when a policy is trained (M6.2 `assess_evidence`), not again at revalidation — restoring a cell does not make a research-only prior production-eligible (the definition's `prior_sources` record is unchanged), but revalidation will happily test one. *Evidence freshness as a gate*: stale evidence is a quarantine *reason* with its own protocol (the reference's evidence time is refreshed on recovery), and case age is bounded by the TTL; there is no separate "evidence is too old to revalidate" gate. Both belong in the M6.4 gate list.
+11. **The `reval-real` command and `OrchestratorTrialSource` prefetch pool are exploratory tooling**: the former has no automated test beyond its parts (the source, the case machine and the verdict mapping are tested; the CLI wiring is not).
 
 ## 16. Conclusions and recommendation
 
