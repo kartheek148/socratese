@@ -282,6 +282,9 @@ def _cmd_sim(args: argparse.Namespace) -> int:
 
 
 def register(sub: Any) -> None:
+    from experience_engine import drift_db_commands
+
+    drift_db_commands.register(sub)
     cal = sub.add_parser(
         "drift-calibrate", help="calibrate the drift monitor on development streams"
     )

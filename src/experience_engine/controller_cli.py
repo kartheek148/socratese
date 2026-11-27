@@ -31,6 +31,7 @@ from experience_engine import RUNTIME_VERSION, drift_commands
 from experience_engine.adapters.artifacts.local_fs import LocalFsArtifactStore
 from experience_engine.adapters.clock import SystemClock
 from experience_engine.adapters.db.controller_store import SqlControllerPolicyStore, SqlDecisionLog
+from experience_engine.adapters.db.drift_store import SqlDriftLog
 from experience_engine.adapters.db.engine import InfraSettings, make_engine
 from experience_engine.adapters.db.registry_store import SqlRegistryStore
 from experience_engine.adapters.db.run_lifecycle import SqlRunLifecycle
@@ -44,6 +45,7 @@ from experience_engine.controller.datasets import (
     load_prior,
     with_protected_share,
 )
+from experience_engine.controller.drift_service import DriftService
 from experience_engine.controller.estimator import build_snapshot
 from experience_engine.controller.evidence_quality import (
     ServingContext,
@@ -661,8 +663,20 @@ def _cmd_live(args: argparse.Namespace) -> int:
     infra = InfraSettings.from_env()
     engine = make_engine(infra.database_url)
     store = SqlControllerPolicyStore(engine)
+    drift = DriftService(
+        lambda tenant, versions: SqlDecisionLog(engine).outcome_records(
+            tenant, policy_versions=versions
+        ),
+        SqlDriftLog(engine),
+        SystemClock().now,
+    )
     setup = build_rollout(
-        store, args.tenant, args.policy_id, RuleCapabilityPolicy(), args.canary_fraction
+        store,
+        args.tenant,
+        args.policy_id,
+        RuleCapabilityPolicy(),
+        args.canary_fraction,
+        drift=drift,
     )
     llm, decisions, model = _build_llm(args.llm, 0)
     defs = portfolio(args.portfolio)

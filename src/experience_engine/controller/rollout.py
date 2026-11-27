@@ -2,8 +2,10 @@
 
 from dataclasses import dataclass
 
+from experience_engine.controller.drift_service import DriftService
 from experience_engine.controller.gates import canary_assignment
 from experience_engine.controller.policy import AdaptiveController
+from experience_engine.domain.controller import ControllerPolicyDefinition
 from experience_engine.domain.decision import ControllerDecision
 from experience_engine.domain.rollout import PolicyState
 from experience_engine.execution.controller import Controller, ControllerInput
@@ -57,19 +59,24 @@ def build_rollout(
     policy_id: str,
     baseline: Controller,
     canary_fraction: float = 0.2,
+    drift: DriftService | None = None,
 ) -> RolloutSetup:
     """The production controller for a tenant: ACTIVE policy (else the rule baseline), with the
     CANARY candidate split in and the SHADOW candidate attached. States come from the registry,
     never from a mutable config, so a rollback takes effect on the next build."""
     records = {r.state: r for r in store.list_versions(tenant_id, policy_id)}
+
+    def build(definition: ControllerPolicyDefinition) -> AdaptiveController:
+        # M6.2: the monitor is synced (and its transitions persisted) before its state can act
+        overlay = drift.sync(definition).overlay if drift is not None else None
+        return AdaptiveController(definition, overlay)
+
     active_rec = records.get(PolicyState.ACTIVE)
-    base: Controller = AdaptiveController(active_rec.definition) if active_rec else baseline
+    base: Controller = build(active_rec.definition) if active_rec else baseline
     canary_rec = records.get(PolicyState.CANARY)
     shadow_rec = records.get(PolicyState.SHADOW)
     controller: Controller = (
-        CanaryRouter(base, AdaptiveController(canary_rec.definition), canary_fraction)
-        if canary_rec
-        else base
+        CanaryRouter(base, build(canary_rec.definition), canary_fraction) if canary_rec else base
     )
     return RolloutSetup(
         controller=controller,
