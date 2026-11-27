@@ -7,7 +7,9 @@ can never become a production decision or an observation of the drift monitor. T
 the revalidation trial row written by the revalidation service.
 """
 
+from collections import deque
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -90,6 +92,8 @@ class OrchestratorTrialSource:
         verifier_version: str,
         verification_available: Callable[[], bool] = lambda: True,
         supports: Callable[[str], bool] = lambda _key: True,
+        workers: int = 1,
+        clock: Callable[[], datetime] | None = None,
     ):
         self._tenant = tenant_id
         self._tasks = [t for t in tasks if t.task.tenant_id == tenant_id]  # tenant isolation
@@ -99,6 +103,13 @@ class OrchestratorTrialSource:
         self._available = verification_available
         self._supports = supports
         self._next = 0
+        self._workers = max(1, workers)
+        # a real executor reports its own observation time; the case machine's `at` is a nominal
+        # slot (it can lie in the future of the wall clock) and is used only without a clock
+        self._clock = clock
+        # results executed ahead of consumption (workers > 1); stamped when consumed
+        self._ready: deque[TrialResult] = deque()
+        self.unconsumed_tokens = 0  # tokens of prefetched trials that were never recorded
 
     def _take(self, family: str | None) -> RevalidationTask | None:
         while self._next < len(self._tasks):
@@ -107,6 +118,29 @@ class OrchestratorTrialSource:
             if family is None or t.task.task_family == family:
                 return t
         return None
+
+    def _execute(self, ref: CellReference, item: RevalidationTask, key_id: str) -> TrialResult:
+        res = self._build(ForcedController(ref.alt_key)).execute(
+            item.task, item.session(), item.llm(), run_tags={"revalidation": key_id}
+        )
+        out, term = res.outcome, res.runtime.termination
+        verdict = classify_run_outcome(
+            out.status,
+            out.verification_results,
+            timed_out=term in _TIMEOUTS,
+            invalid_output=term in _INVALID,
+        )
+        return TrialResult(
+            verdict=verdict,
+            tokens=out.tokens_used,
+            task_ref=item.task.task_id,
+            observed_at=datetime.min,  # stamped when the trial is consumed
+            runtime_version=self._runtime,
+            verifier_version=out.verifier_version,
+            capability_ref=ref.alt_key,
+            latency_ms=out.execution_time_ms,
+            tenant_id=out.tenant_id,
+        )
 
     def facts(self, ref: CellReference, now: datetime) -> ExecutorFacts:
         left = sum(
@@ -120,31 +154,30 @@ class OrchestratorTrialSource:
             runtime_version=self._runtime,
             verifier_version=self._verifier,
             verification_available=self._available(),
-            pool=left,
+            pool=left + len(self._ready),
         )
 
     def run(self, ref: CellReference, key: TrialKey, at: datetime) -> TrialResult | None:
-        item = self._take(ref.family)
-        if item is None:
-            return None
-        res = self._build(ForcedController(ref.alt_key)).execute(
-            item.task, item.session(), item.llm(), run_tags={"revalidation": key.ident()}
-        )
-        out, term = res.outcome, res.runtime.termination
-        verdict = classify_run_outcome(
-            out.status,
-            out.verification_results,
-            timed_out=term in _TIMEOUTS,
-            invalid_output=term in _INVALID,
-        )
-        return TrialResult(
-            verdict=verdict,
-            tokens=out.tokens_used,
-            task_ref=item.task.task_id,
-            observed_at=at,
-            runtime_version=self._runtime,
-            verifier_version=out.verifier_version,
-            capability_ref=ref.alt_key,
-            latency_ms=out.execution_time_ms,
-            tenant_id=out.tenant_id,
-        )
+        if not self._ready:
+            batch: list[RevalidationTask] = []
+            while len(batch) < self._workers:
+                item = self._take(ref.family)
+                if item is None:
+                    break
+                batch.append(item)
+            if not batch:
+                return None
+            if len(batch) == 1:
+                self._ready.append(self._execute(ref, batch[0], key.ident()))
+            else:  # concurrent real executions; results are served in task order
+                with ThreadPoolExecutor(len(batch)) as pool:
+                    self._ready.extend(
+                        pool.map(lambda it: self._execute(ref, it, key.ident()), batch)
+                    )
+        got = self._ready.popleft()
+        return got.model_copy(update={"observed_at": self._clock() if self._clock else at})
+
+    def close(self) -> int:
+        """Tokens spent on trials that were executed but never consumed (disclosed, not hidden)."""
+        self.unconsumed_tokens = sum(r.tokens for r in self._ready)
+        return self.unconsumed_tokens

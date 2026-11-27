@@ -28,10 +28,16 @@ BENEFIT_PER_DECISION = (0.52 - 6500 * UTILITY_LAMBDA) - (0.50 - 9000 * UTILITY_L
 
 
 def load(path: str) -> dict[str, dict[str, list[RevalResult]]]:
+    import gzip
     import json
 
+    if path.endswith(".gz"):
+        with gzip.open(path, "rt") as fh:
+            raw = fh.read()
+    else:
+        raw = Path(path).read_text()
     by: dict[str, dict[str, list[RevalResult]]] = defaultdict(lambda: defaultdict(list))
-    for d in json.loads(Path(path).read_text()):
+    for d in json.loads(raw):
         r = result_from_json(d)
         by[r.sid][r.variant].append(r)
     for sid in by:

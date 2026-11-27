@@ -345,3 +345,58 @@ def key_of(i: int) -> Any:
     from experience_engine.domain.revalidation import TrialKey
 
     return TrialKey(cell_key=KEY, episode=1, cycle=0, ordinal=i)
+
+
+def test_prefetched_trials_are_served_in_order_stamped_when_consumed_and_disclosed_if_unused() -> (
+    None
+):
+    from test_controller_e2e import CONFIG, TickClock, pool_tasks
+
+    from experience_engine.adapters.llm.fake import HeuristicFakeLLM
+    from experience_engine.bench.environment import SimulatedEnvironment
+    from experience_engine.bench.verifier import SimulationVerifier
+    from experience_engine.controller.drift import references_from_snapshot
+    from experience_engine.execution.orchestrator import TaskOrchestrator
+    from experience_engine.execution.revalidation import OrchestratorTrialSource, RevalidationTask
+
+    ref = references_from_snapshot(drift_definition(1, "ENFORCE").snapshot)[0]
+    pool = [
+        RevalidationTask(
+            b.task,
+            lambda b=b: SimulatedEnvironment(b.environment, b.task.allowed_tools),  # type: ignore[misc]
+            HeuristicFakeLLM,
+        )
+        for b in pool_tasks(6)
+    ]
+    verifier = SimulationVerifier()
+
+    def make(workers: int) -> OrchestratorTrialSource:
+        return OrchestratorTrialSource(
+            tenant_id=TENANT,
+            tasks=pool,
+            build=lambda c: TaskOrchestrator(
+                controller=c, verifier=verifier, clock=TickClock(), config=CONFIG
+            ),
+            runtime_version="rt",
+            verifier_version=verifier.version,
+            workers=workers,
+        )
+
+    serial, parallel = make(1), make(4)
+    a = [serial.run(ref, key_of(i), T0 + timedelta(hours=i)) for i in range(2)]
+    b = [parallel.run(ref, key_of(i), T0 + timedelta(hours=i)) for i in range(2)]
+    assert [r.task_ref for r in a if r] == [r.task_ref for r in b if r]  # same tasks, same order
+    assert [r.verdict for r in a if r] == [r.verdict for r in b if r]  # same independent verdicts
+    assert [r.observed_at for r in b if r] == [
+        T0,
+        T0 + timedelta(hours=1),
+    ]  # stamped on consumption
+    assert parallel.facts(ref, T0).pool == 4  # 6 tasks − 2 consumed; 2 of them already executed
+    unused = parallel.close()
+    assert unused > 0  # the two executed-but-unrecorded trials are disclosed as cost
+    assert serial.close() == 0
+
+    stamped = make(1)  # a real executor stamps its own observation time, not the nominal slot
+    stamped._clock = lambda: T0 + timedelta(days=9)
+    got = stamped.run(ref, key_of(0), T0 + timedelta(days=30))
+    assert got is not None and got.observed_at == T0 + timedelta(days=9)

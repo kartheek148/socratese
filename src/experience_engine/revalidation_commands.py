@@ -2,6 +2,7 @@
 status / evaluate / replay of persisted revalidation evidence."""
 
 import argparse
+import dataclasses
 import json
 import multiprocessing
 from pathlib import Path
@@ -27,10 +28,13 @@ def _overrides(items: list[str] | None) -> dict[str, Any]:
     return out
 
 
-def _sim_worker(job: tuple[str, int, str, str, list[str]]) -> list[dict[str, Any]]:
-    sid, seed, drift_json, reval_json, variants = job
+def _sim_worker(job: tuple[str, int, str, str, list[str], int | None]) -> list[dict[str, Any]]:
+    sid, seed, drift_json, reval_json, variants, horizon = job
+    scenario = REVAL_SCENARIOS[sid]
+    if horizon is not None:  # EXPLORATORY: a longer stream after the same events
+        scenario = dataclasses.replace(scenario, n=horizon)
     results = run_reval_stream(
-        REVAL_SCENARIOS[sid],
+        scenario,
         seed,
         DriftParams.model_validate_json(drift_json),
         RevalidationParams.model_validate_json(reval_json),
@@ -52,7 +56,7 @@ def _cmd_sim(args: argparse.Namespace) -> int:
     )
     variants = list(args.variants)
     jobs = [
-        (sid, s, drift.model_dump_json(), reval.model_dump_json(), variants)
+        (sid, s, drift.model_dump_json(), reval.model_dump_json(), variants, args.horizon)
         for sid in args.scenarios
         for s in seeds
     ]
@@ -73,6 +77,125 @@ def _cmd_report(args: argparse.Namespace) -> int:
     text = report(args.results, args.repro, args.title)
     Path(args.out).write_text(text)
     print(f"wrote {args.out}")
+    return 0
+
+
+# ---- exploratory real-model revalidation (no database) -------------------------------------------
+def _cmd_real(args: argparse.Namespace) -> int:
+    """One revalidation case on a recorded real prior: the real model, the production orchestrator
+    and the independent verifier, fresh private tasks. Exploratory: it demonstrates the real
+    execution path and measures real trial cost; it is not an acceptance experiment."""
+    import time
+    from datetime import UTC, datetime, timedelta
+
+    from experience_engine import RUNTIME_VERSION, controller_cli
+    from experience_engine.adapters.clock import SystemClock
+    from experience_engine.bench.environment import SimulatedEnvironment
+    from experience_engine.bench.verifier import SimulationVerifier
+    from experience_engine.controller.datasets import load_prior
+    from experience_engine.controller.drift import references_from_snapshot
+    from experience_engine.controller.estimator import build_snapshot
+    from experience_engine.controller.revalidation import CaseState, step_case
+    from experience_engine.domain.benchmark import AgentConfig
+    from experience_engine.domain.controller import ControllerParams
+    from experience_engine.domain.revalidation import (
+        QuarantineReason,
+        RevalState,
+        TrialVerdict,
+    )
+    from experience_engine.eval_cli import _build_llm
+    from experience_engine.execution.orchestrator import TaskOrchestrator
+    from experience_engine.execution.protocol import PROMPT_VERSION
+    from experience_engine.execution.revalidation import (
+        OrchestratorTrialSource,
+        RevalidationTask,
+    )
+
+    prior = load_prior(args.prior, families=args.families)
+    snap = build_snapshot([], args.tenant, ControllerParams.model_validate({"evidence": {}}),
+                          prior=prior)  # fmt: skip
+    ref = next(r for r in references_from_snapshot(snap) if r.family in args.families)
+    llm, _decisions, model = _build_llm(args.llm, 0)
+    verifier, clock = SimulationVerifier(), SystemClock()
+    cfg = AgentConfig(config_id="REVALIDATION", prompt_version=PROMPT_VERSION,
+                      model=model)  # fmt: skip
+    tasks = [
+        RevalidationTask(
+            t.bench.task,
+            lambda t=t: SimulatedEnvironment(t.bench.environment, t.bench.task.allowed_tools),  # type: ignore[misc]
+            lambda: llm,
+        )
+        for t in controller_cli._tasks(args, ["VALIDATION", "HIDDEN_TRANSFER"])
+    ]
+    source = OrchestratorTrialSource(
+        tenant_id=args.tenant,
+        tasks=tasks,
+        build=lambda c: TaskOrchestrator(controller=c, verifier=verifier, clock=clock, config=cfg),
+        runtime_version=RUNTIME_VERSION,
+        verifier_version=verifier.version,
+        workers=args.workers,
+        clock=lambda: datetime.now(UTC),
+    )
+    params = RevalidationParams(
+        strategy=RevalStrategy(args.strategy),
+        dwell=0,
+        max_trials=args.max_trials,
+        trials_per_round=args.round_size,
+        round_hours=1.0,
+        confirm_trials=args.confirm_trials,
+        confirm_gap_hours=0.0,
+        min_pool=1,
+    )
+    now = datetime.now(UTC)
+    case = CaseState(
+        cell_key=ref.cell_key, episode=1, reason=QuarantineReason(args.reason), severity=0.0,
+        trigger_decision_id="real-0", trigger_at=now - timedelta(days=1),
+        opened_at=now - timedelta(days=1), dwell=10_000,
+    )  # fmt: skip
+    transitions: list[Any] = []
+    trials: list[Any] = []
+    spent, t0 = 0, time.monotonic()
+    print(f"reference: p_alt={ref.p_alt:.3f} mean_tokens={ref.mean_tokens:.0f} n={ref.n}; "
+          f"{len(tasks)} fresh tasks; strategy {params.strategy.value}; "
+          f"model {model.model}")  # fmt: skip
+    for k in range(args.max_rounds):
+        at = datetime.now(UTC)
+        res = step_case(ref, params, case, execute=True, tenant_id=args.tenant, source=source,
+                        facts=source.facts(ref, at), lifetime_spent=spent, anchor=f"real-{k}",
+                        now=at)  # fmt: skip
+        case, spent = res.case, spent + res.tokens
+        transitions += res.transitions
+        trials += res.trials
+        for t in res.transitions:
+            print(f"  round {k}: {t.from_state.value if t.from_state else '-'} -> "
+                  f"{t.to_state.value} {t.trigger.value} n={t.n_trials} "
+                  f"{'; '.join(t.detail)}")  # fmt: skip
+        ok = sum(1 for x in trials if x.result.verdict == TrialVerdict.SUCCESS)
+        print(f"  round {k}: {len(trials)} trials, {ok} successes, {spent:,} tokens, "
+              f"{time.monotonic() - t0:.0f}s")  # fmt: skip
+        if case.state in (RevalState.RECOVERED, RevalState.EXPIRED, RevalState.BUDGET_EXHAUSTED):
+            break
+    ev = [x for x in trials if x.key.stage.value == "EVIDENCE"]
+    counted = [x for x in ev if x.result.counted]
+    out = {
+        "reference": {"p_alt": ref.p_alt, "mean_tokens": ref.mean_tokens, "n": ref.n},
+        "params": params.model_dump(mode="json"),
+        "final_state": case.state.value,
+        "trials": len(trials),
+        "evidence_successes": sum(1 for x in counted if x.result.success),
+        "evidence_counted": len(counted),
+        "tokens": spent,
+        "unconsumed_prefetched_tokens": source.close(),
+        "mean_tokens_per_trial": spent / max(1, len(trials)),
+        "seconds": time.monotonic() - t0,
+        "transitions": [t.model_dump(mode="json") for t in transitions],
+        "verdicts": [x.result.verdict.value for x in trials],
+    }
+    Path(args.out).write_text(json.dumps(out, indent=1, default=str))
+    print(f"final state {case.state.value}; {out['evidence_successes']}/{out['evidence_counted']} "
+          f"counted evidence trials succeeded (reference {ref.p_alt:.3f}); {spent:,} tokens "
+          f"(+{out['unconsumed_prefetched_tokens']:,} prefetched, unused); "
+          f"wrote {args.out}")  # fmt: skip
     return 0
 
 
@@ -192,9 +315,39 @@ def register(sub: Any) -> None:
                      help="EXPLORATORY override of a RevalidationParams field")  # fmt: skip
     sim.add_argument("--drift-set", nargs="*", default=None, metavar="KEY=VALUE",
                      help="EXPLORATORY override of a DriftParams field")  # fmt: skip
+    sim.add_argument("--horizon", type=int, default=None,
+                     help="EXPLORATORY: stream length (default: the scenario's 800)")  # fmt: skip
     sim.add_argument("--workers", type=int, default=8)
     sim.add_argument("--json-out", required=True)
     sim.set_defaults(func=_cmd_sim)
+
+    real = sub.add_parser(
+        "reval-real", help="EXPLORATORY: one revalidation case with the real model"
+    )
+    real.add_argument("--prior", nargs="+", required=True, metavar="RESULTS")
+    real.add_argument("--families", nargs="+", default=["timeout"])
+    real.add_argument("--root", required=True)
+    real.add_argument("--private-root", default=None)
+    real.add_argument("--llm", default="vertex")
+    real.add_argument("--tenant", default="bench")
+    real.add_argument("--strategy", default="SEQUENTIAL", choices=[s.value for s in RevalStrategy])
+    real.add_argument("--reason", default="STRUCTURAL_INVALIDATION",
+                      choices=["STRUCTURAL_INVALIDATION", "PERFORMANCE_DEGRADATION",
+                               "EVIDENCE_STALE"])  # fmt: skip
+    real.add_argument("--max-trials", type=int, default=200)
+    real.add_argument("--max-rounds", type=int, default=100)
+    real.add_argument("--round-size", type=int, default=10)
+    real.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="concurrent real executions per round (cost of unused ones is reported)",
+    )
+    real.add_argument("--confirm-trials", type=int, default=20)
+    real.add_argument("--offset", type=int, default=0)
+    real.add_argument("--max-tasks", type=int, default=0)
+    real.add_argument("--out", required=True)
+    real.set_defaults(func=_cmd_real)
 
     rep = sub.add_parser("reval-report", help="pre-registered acceptance and verdict")
     rep.add_argument("--results", required=True)
