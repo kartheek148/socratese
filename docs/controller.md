@@ -101,6 +101,25 @@ uv run ee-ctl drift-evaluate | drift-status | drift-replay | drift-shadow-report
 uv run ee-ctl drift-calibrate / drift-sim / drift-real / drift-report ...                               # frozen experiments (synthetic overlays)
 ```
 
+## Controlled revalidation of quarantined cells (M6.3)
+
+M6.2 quarantines a cell whose evidence stopped being trustworthy and lets it back through a *timer* followed by live probes. M6.3 replaces that path, per policy version and opt-in, with **bounded, independently verified, out-of-band revalidation** whose every step is explainable from stored evidence. Audit: [research/m6_3_revalidation_audit.md](./research/m6_3_revalidation_audit.md); frozen design and protocol: [experiments/revalidation-design.md](./experiments/revalidation-design.md); results: [evaluations/revalidation-report.md](./evaluations/revalidation-report.md); ADR [0018](./decisions/0018-controlled-revalidation.md). **M6.1/M6.2 semantics and every stored hash are unchanged**: the M6.2 state machine (`advance`) is untouched, `ControllerParams.revalidation` is omitted from the serialised form when unset, and revalidation changes no decision until a cell is quarantined (tested).
+
+* **A case per quarantine episode** (`controller/revalidation.py`, pure; `domain/revalidation.py`), composed with the M6.2 `MonitorFleet` by `RevalidationFleet`. The case disables native recovery through the existing `MonitorState.locked` flag; a quarantined cell stays prior-disabled in the overlay in **every** case state except `RECOVERED` (no live probes: users are not exposed). `RECOVERED` returns the monitor to NORMAL with empty windows (sequence number and episode preserved, so a relapse still counts toward `max_episodes`) and, for structural and stale cases, rebases the reference's versions / evidence time (an event in the log; the stored prior is never edited).
+* **Reason** is a *projection* of the existing `DriftTrigger` of the DRIFTED transition (`PERFORMANCE_DEGRADATION`, `STATISTICAL_DRIFT` for CUSUM, `COST_DEGRADATION`, `STRUCTURAL_INVALIDATION`, `EVIDENCE_STALE`; `VERIFICATION_FAILURE` only if supplied externally; `UNKNOWN` is ineligible).
+* **Eligibility** is a gate list, never automatic: reason known/revalidatable, tenant, risk class (`allowed_risks`, default `low`), identity (executor supports the capability), runtime and verifier versions known, verification available, minimum pool, lifetime token budget and failed-cycle count, TTL, strategy readiness. One reason per failed gate; permanent failures end the episode.
+* **States** `QUARANTINED → REVALIDATION_PENDING → REVALIDATING → RECOVERY_CANDIDATE → RECOVERED`; `REVALIDATING|CANDIDATE → QUARANTINED` on a failed cycle; terminal `EXPIRED` (case or cycle TTL) and `BUDGET_EXHAUSTED` (trial cap, token cap, lifetime budget, cycles exhausted). `RECOVERY_CANDIDATE` waits `confirm_gap_hours` and runs `confirm_trials` fresh trials; confirmation is a *collapse guard*, not a second proof.
+* **Strategies** (one statistical hypothesis for all: success not worse than the reference by ≥ `margin` 0.10; exact binomial error control; a cost guard): `FIXED` (A: one fixed-size exact test), `EVIDENCE_THRESHOLD` (B: A's test, started once the rule default's concurrent verified outcomes show a healthy environment), `SEQUENTIAL` (C: SPRT, one trial at a time, truncated). A cost-futility stop applies to all (design erratum E1).
+* **Verification.** Trial verdicts are `SUCCESS`, `FAILURE`, `TIMEOUT`, `INVALID_OUTPUT`, `VERIFICATION_UNAVAILABLE`. Only an explicitly verified pass is a success; an unavailable verdict is never a success, never counted in n, consumes budget, and too many end the cycle. `OrchestratorTrialSource` (`execution/revalidation.py`) runs trials through the production orchestrator and verifier with a **forced action and no run lifecycle**: nothing is written to the production run, decision or outcome tables.
+* **Lineage.** Every trial row records case, cycle, stage, ordinal, round anchor/time, verdict, tokens, versions, task and capability references, and a lineage verdict (`NOT_NEWER` than the evidence that triggered quarantine, `TENANT_MISMATCH`, `DUPLICATE`, `VERSION_MISMATCH`; rejected trials are stored and still cost tokens). Every transition row records its measurements, failed gates, executor facts, rebase, trial counts, tokens and the parameter hash.
+* **Persistence and replay.** `controller_revalidation_transitions` and `controller_revalidation_trials` (migration 0008, append-only triggers; the downgrade refuses while they hold rows). `RevalidationService.sync` (the controller-build entry) recomputes the fleet from the ordered outcomes and the *persisted trials only*, refuses to append unless what is stored is exactly what is recomputed, persists what the observations imply and publishes the overlay; `.run(definition, executor)` is the learning-plane worker that adds one live round (trials and transitions atomically). The M6.2 `DriftService` refuses revalidation policies (a plain replay would miss the restorations); `RevalidationService(fallback=DriftService)` serves both kinds to `build_rollout`. In `SHADOW` mode cases open and readiness is recorded (`applied=false`) but **no trial is executed**.
+
+```
+uv run ee-ctl reval-sim --seed-start 9000000 --seeds 100 --json-out heldout.json     # the frozen experiment (synthetic)
+uv run ee-ctl reval-report --results heldout.json [--repro again.json] --out report.md  # pre-registered acceptance + verdict, computed
+uv run ee-ctl reval-status | reval-evaluate | reval-replay --version N                # persisted cases, sync, verification
+```
+
 ## Commands
 
 ```
@@ -114,9 +133,9 @@ uv run ee-ctl live       --portfolio heterogeneous --root PUB --private-root PRI
 ```
 `paired-run` and `live` use hand-authored **stress fixtures** (`controller_fixtures.py`; a compiler-shaped capability and a *drifted* one whose target key is frozen to its original layout). They are validated through the normal DSL validator, held in memory, never registered or promoted, and every run is tagged experimental.
 
-## Schema (migrations 0005, 0006, 0007)
+## Schema (migrations 0005, 0006, 0007, 0008)
 
-`controller_policies` (immutable definition + hash; only `state` changes, along the legal graph, with a trigger requiring stage evidence), `controller_policy_evaluations` and `controller_policy_transitions` (append-only), partial unique indexes for one ACTIVE/CANARY/SHADOW version per policy, and `policy_decisions.acted boolean NOT NULL DEFAULT true`. Migration 0006 only widens the `kind` CHECK to include `EVIDENCE_DRIVEN` (paired priors live inside the JSON definition); migration 0007 adds the append-only `controller_drift_transitions` audit table (the downgrade refuses while it holds rows). See [schema.md](./schema.md).
+`controller_policies` (immutable definition + hash; only `state` changes, along the legal graph, with a trigger requiring stage evidence), `controller_policy_evaluations` and `controller_policy_transitions` (append-only), partial unique indexes for one ACTIVE/CANARY/SHADOW version per policy, and `policy_decisions.acted boolean NOT NULL DEFAULT true`. Migration 0006 only widens the `kind` CHECK to include `EVIDENCE_DRIVEN` (paired priors live inside the JSON definition); migration 0007 adds the append-only `controller_drift_transitions` audit table and migration 0008 the append-only `controller_revalidation_transitions` / `controller_revalidation_trials` (the downgrades refuse while the tables hold rows). See [schema.md](./schema.md).
 
 ## Limits
 

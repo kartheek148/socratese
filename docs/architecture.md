@@ -146,6 +146,8 @@ Selection principle: minimize expected total cost subject to reliability, permis
 
 > **Milestone 6.2 implementation:** priors can come from the real evaluation workflow (final-outcome evidence, explicit eligibility gates, audited overrides) and a windowed drift monitor (`NORMAL/SUSPECT/DRIFTED/QUARANTINED/RECOVERING`, hysteresis, bounded recovery probes, persisted transitions, shadow-first rollout) can stop a stale prior from controlling decisions. It runs in the learning plane and only restricts a policy toward the rule baseline. See [controller.md](./controller.md), [ADR 0017](./decisions/0017-evidence-reliability-and-drift-monitor.md) and [the report](./evaluations/evidence-reliability-report.md).
 
+> **Milestone 6.3 implementation:** a quarantined cell can be revalidated through bounded, independently verified, out-of-band trials (reason-aware eligibility gates, three comparable strategies, a candidate/confirmation stage, explicit trial/token/time budgets, lineage on every trial, append-only persisted evidence with exact replay) and returns to service only on persisted, replayable evidence. It runs in the learning plane, never executes a trial in SHADOW, never exposes users to the quarantined action, and leaves the M6.2 monitor and every earlier hash unchanged. See [controller.md](./controller.md), [ADR 0018](./decisions/0018-controlled-revalidation.md) and [the report](./evaluations/revalidation-report.md).
+
 ### 4.5 Agent runtime and tool gateway
 Support:
 - deterministic capability execution;
