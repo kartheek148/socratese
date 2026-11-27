@@ -361,10 +361,11 @@ def _cmd_real(args: argparse.Namespace) -> int:
 
 
 def register(sub: Any) -> None:
-    from experience_engine import drift_db_commands, drift_report
+    from experience_engine import drift_db_commands, drift_report, revalidation_commands
 
     drift_db_commands.register(sub)
     drift_report.register(sub)
+    revalidation_commands.register(sub)
     cal = sub.add_parser(
         "drift-calibrate", help="calibrate the drift monitor on development streams"
     )

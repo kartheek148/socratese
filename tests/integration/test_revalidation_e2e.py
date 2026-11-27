@@ -244,3 +244,104 @@ def test_policies_keep_their_own_service_and_the_old_one_refuses_new_ones(engine
         lambda t, v: records, SqlRevalidationLog(engine), drift_log, SystemClock().now, fallback=old
     )
     assert svc.sync(plain).overlay is not None  # delegated: the M6.2 behaviour is unchanged
+
+
+# ---- real execution path: forced action, independent verifier, nothing written as production -----
+def test_trials_run_through_the_orchestrator_and_verifier_without_creating_production_runs(
+    engine: Engine,
+) -> None:
+    from test_controller_e2e import CONFIG, TickClock, pool_tasks
+
+    from experience_engine.adapters.llm.fake import HeuristicFakeLLM
+    from experience_engine.bench.environment import SimulatedEnvironment
+    from experience_engine.bench.verifier import SimulationVerifier
+    from experience_engine.controller.drift import parse_paired_key, references_from_snapshot
+    from experience_engine.execution.orchestrator import TaskOrchestrator
+    from experience_engine.execution.revalidation import (
+        FORCED_POLICY_VERSION,
+        ForcedController,
+        OrchestratorTrialSource,
+        RevalidationTask,
+    )
+
+    d = drift_definition(1, "ENFORCE")
+    ref = references_from_snapshot(d.snapshot)[0]
+    assert parse_paired_key(ref.cell_key)[3] == PLANNING_KEY
+    pool = [
+        RevalidationTask(
+            b.task,
+            lambda b=b: SimulatedEnvironment(b.environment, b.task.allowed_tools),  # type: ignore[misc]
+            HeuristicFakeLLM,
+        )
+        for b in pool_tasks(4)
+    ]
+    verifier = SimulationVerifier()
+    source = OrchestratorTrialSource(
+        tenant_id=TENANT,
+        tasks=pool,
+        build=lambda c: TaskOrchestrator(  # no lifecycle: nothing is persisted as a run
+            controller=c, verifier=verifier, clock=TickClock(), config=CONFIG
+        ),
+        runtime_version=ref.runtime_version or "rt",
+        verifier_version=verifier.version,
+    )
+    facts = source.facts(ref, T0)
+    assert facts.tenant_id == TENANT and facts.pool == 4 and facts.verification_available
+    results = [source.run(ref, key_of(i), T0 + timedelta(hours=i)) for i in range(4)]
+    assert all(r is not None for r in results)
+    assert {r.verdict for r in results if r} <= set(TrialVerdict)
+    assert all(r.capability_ref == PLANNING_KEY and r.tenant_id == TENANT for r in results if r)
+    assert all(r.verifier_version == verifier.version for r in results if r)
+    assert all(r.tokens > 0 for r in results if r)  # real, measured model tokens
+    assert source.run(ref, key_of(9), T0) is None  # the pool is finite: no result, no invention
+    with engine.connect() as conn:  # the production tables never saw a trial
+        for table in ("tasks", "task_runs", "run_outcomes", "policy_decisions", "outbox_events"):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {table}")).scalar_one() == 0
+    assert ForcedController(PLANNING_KEY).policy_version == FORCED_POLICY_VERSION
+
+
+def test_a_foreign_tenants_tasks_are_never_in_the_pool() -> None:
+    from test_controller_e2e import CONFIG, TickClock, pool_tasks
+
+    from experience_engine.adapters.llm.fake import HeuristicFakeLLM
+    from experience_engine.bench.environment import SimulatedEnvironment
+    from experience_engine.bench.verifier import SimulationVerifier
+    from experience_engine.controller.drift import references_from_snapshot
+    from experience_engine.execution.orchestrator import TaskOrchestrator
+    from experience_engine.execution.revalidation import OrchestratorTrialSource, RevalidationTask
+
+    ref = references_from_snapshot(drift_definition(1, "ENFORCE").snapshot)[0]
+    own = pool_tasks(2)
+    foreign = [
+        RevalidationTask(
+            b.task.model_copy(update={"tenant_id": "other"}),
+            lambda b=b: SimulatedEnvironment(b.environment, b.task.allowed_tools),  # type: ignore[misc]
+            HeuristicFakeLLM,
+        )
+        for b in pool_tasks(3)
+    ]
+    mine = [
+        RevalidationTask(
+            b.task,
+            lambda b=b: SimulatedEnvironment(b.environment, b.task.allowed_tools),  # type: ignore[misc]
+            HeuristicFakeLLM,
+        )
+        for b in own
+    ]
+    verifier = SimulationVerifier()
+    source = OrchestratorTrialSource(
+        tenant_id=TENANT,
+        tasks=[*foreign, *mine],
+        build=lambda c: TaskOrchestrator(
+            controller=c, verifier=verifier, clock=TickClock(), config=CONFIG
+        ),
+        runtime_version="rt",
+        verifier_version=verifier.version,
+    )
+    assert source.facts(ref, T0).pool == 2
+
+
+def key_of(i: int) -> Any:
+    from experience_engine.domain.revalidation import TrialKey
+
+    return TrialKey(cell_key=KEY, episode=1, cycle=0, ordinal=i)
