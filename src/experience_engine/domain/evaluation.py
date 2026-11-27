@@ -5,9 +5,15 @@ in `evaluation/policy.py` and the lifecycle in `capabilities/registry.py`.
 import hashlib
 import json
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 from experience_engine.domain.time import UtcDatetime
 
@@ -29,6 +35,7 @@ class Arm(StrEnum):
     MEMORY = "B_MEMORY"  # baseline + episodic hint only
     CAPABILITY = "C_CAPABILITY"  # compiled capability, fixed strategy
     MEMORY_ASSET = "M_MEMORY_ASSET"  # baseline agent + one governed memory artifact (M5.8)
+    SERVING = "E_SERVING"  # M6.2: the capability as production serves it (planner fallback)
 
 
 class Verdict(StrEnum):
@@ -104,6 +111,50 @@ class TaskResult(_Frozen):
     cache_hit: bool = False  # served from a previously computed run (not executed now)
     prompt_tokens: int | None = None  # split known only for general-planning model calls
     completion_tokens: int | None = None
+    # M6.2 serving arm only (omitted from the serialised form when unset)
+    capability_used: bool | None = None
+    fell_back: bool | None = None
+    asset_ref: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_serving(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        for key in ("capability_used", "fell_back", "asset_ref"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
+
+
+class ServingEvidence(_Frozen):
+    """Final-outcome paired evidence recorded by the evaluation workflow (M6.2-A).
+
+    The unit is the production outcome: the capability served with its planner fallback (default)
+    against the stateless planner (alternative), per task over HELD_OUT and TRANSFER repetitions
+    (strict majority; UNKNOWN and ties dropped and counted). It never enters a promotion decision.
+    """
+
+    evidence_kind: Literal["PROMOTION_EVALUATION"] = "PROMOTION_EVALUATION"
+    capability_ref: str  # id@version
+    family: str
+    risk_class: Literal["low", "medium", "high"]
+    suites: list[str]
+    n: int
+    both: int
+    default_only: int
+    alt_only: int
+    neither: int
+    default_tokens: int  # capability + fallback, summed over the paired tasks
+    alt_tokens: int  # planner
+    n_unknown_dropped: int
+    n_tied_dropped: int
+    n_not_offered: int  # tasks where no capability was used by the serving arm
+    n_missing_cost: int
+    n_duplicate_rows: int
+    tasks_sha256: str
+    capability_hash: str = ""
+    catalog: str = "EVALUATION_STATIC_CATALOG"  # never an ACTIVE production catalog
+    serving_tokens: int = 0  # all tokens the serving arm spent in this evaluation
+    n_runs: int = 0
 
 
 class LifecycleCost(_Frozen):
@@ -219,6 +270,17 @@ class EvaluationReport(_Frozen):
     stage_reached: int | None = None
     early_stopped: bool = False
     resources: ValidationResources | None = None
+    # M6.2 (optional; omitted from the serialised form when None, so earlier reports are unchanged)
+    serving_evidence: ServingEvidence | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_serving_evidence(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.serving_evidence is None:
+            data.pop("serving_evidence", None)
+        return data
 
     def n_in(self, suite: Suite) -> int:
         arms = self.suites.get(suite.value, {})

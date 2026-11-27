@@ -642,6 +642,7 @@ APPEND_ONLY_TABLES = (
     "memory_observations",
     "controller_policy_evaluations",
     "controller_policy_transitions",
+    "controller_drift_transitions",
 )
 
 
@@ -745,4 +746,44 @@ controller_policy_transitions = sa.Table(
     sa.ForeignKeyConstraint(["evaluation_id"], ["controller_policy_evaluations.evaluation_id"]),
     sa.CheckConstraint("char_length(reason) <= 500", name="reason_bounded"),
     sa.Index("ix_controller_policy_transitions_version", "tenant_id", "policy_id", "version"),
+)
+
+
+# ---- M6.2: evidence drift monitor (audit of state transitions) ---------------------------------
+DRIFT_STATES = ("NORMAL", "SUSPECT", "DRIFTED", "QUARANTINED", "RECOVERING")
+
+controller_drift_transitions = sa.Table(
+    "controller_drift_transitions",
+    metadata,
+    sa.Column("transition_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("policy_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("cell_key", sa.Text, nullable=False),
+    sa.Column("seq", sa.Integer, nullable=False),
+    sa.Column("from_state", sa.Text, nullable=False),
+    sa.Column("to_state", sa.Text, nullable=False),
+    sa.Column("trigger", sa.Text, nullable=False),
+    sa.Column("effect", sa.Text, nullable=False),
+    sa.Column("mode", sa.Text, nullable=False),
+    sa.Column("applied", sa.Boolean, nullable=False),
+    sa.Column("measurements", JSONB, nullable=False),
+    sa.Column("n_window", sa.Integer, nullable=False),
+    sa.Column("config", JSONB, nullable=False),
+    sa.Column("config_hash", sa.Text, nullable=False),
+    sa.Column("detector_version", sa.Text, nullable=False),
+    sa.Column("decision_id", sa.Text, nullable=False),
+    sa.Column("observed_at", _ts()),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_CTRL_VERSION_FK),
+    sa.UniqueConstraint("tenant_id", "policy_id", "version", "cell_key", "seq"),
+    sa.CheckConstraint(
+        "from_state IN (" + ",".join(f"'{x}'" for x in DRIFT_STATES) + ")", name="from_state"
+    ),
+    sa.CheckConstraint(
+        "to_state IN (" + ",".join(f"'{x}'" for x in DRIFT_STATES) + ")", name="to_state"
+    ),
+    sa.CheckConstraint("mode IN ('SHADOW','ENFORCE')", name="mode"),
+    sa.CheckConstraint("seq >= 1", name="seq_positive"),
+    sa.Index("ix_controller_drift_transitions_version", "tenant_id", "policy_id", "version"),
 )

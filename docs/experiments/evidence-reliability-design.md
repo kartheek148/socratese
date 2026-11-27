@@ -123,7 +123,17 @@ The smoke run exercised the code path only; no threshold was chosen from it. It 
 * **E1 (S9b).** "S2 at 15 of N=40" leaves 25 post-drift observations, not fewer than `min_samples=20`. S9b is now N=40 with the drift at 25 (15 post-drift observations).
 * **E2 (S10).** Survival 0.35 for 25 observations (success ≈ 0.18 against 0.52) is a severe transient, not a misleading one: any detector with a 95% bound alarms on it. S10 now uses survival 0.70 (success ≈ 0.36, the kind of early bad luck a 25-sample window shows about 5% of the time) with ground truth "no drift"; the severe version is kept as **S10b** (ground truth: material during 0–25), informational, no acceptance criterion.
 * **E3 (recovery arithmetic).** With `probe_rate 0.10`, 30 fresh probes need ≈ 300 decisions after RECOVERING begins (plus `min_quarantine 50`), so criterion (f) "within 300 decisions of the drift ending" was unattainable by construction. `probe_rate` is raised to **0.25** (still bounded by `probe_budget 150` and the exploration allow-list) and criterion (f) becomes: **≥ 70% of S5 streams are back to NORMAL by the end of the stream (400 decisions after the drift ends)**, with at most one quarantine episode per stream in S1/S6.
+* **E5 (feasibility needs detection).** A detector that never alarms would satisfy every false-alarm constraint, so a grid point is feasible only if it also detects S2 and S3 in at least 90% of development streams.
 * **E4 (calibration fallback).** If no grid point meets the §6.1 false-alarm constraints, the most conservative grid point (`confidence 0.999`, `persistence 10`) is frozen and the failure to reach the constraints is itself a reported result.
 
-## 10. Calibration outcome
-*(appended after the development run, before the held-out run)*
+## 10. Calibration outcome (frozen before the held-out run)
+
+Development seeds 100000-100199, 200 streams per scenario, monitor-only; full table in [evidence-reliability-calibration.md](../evaluations/evidence-reliability-calibration.md). Applying the §6.1 rule (with E5):
+
+* Feasible WINDOW points: (0.995, 10), (0.999, 3), (0.999, 5). The smallest mean of the S2 and S3 median delays is **WINDOW, confidence 0.995, persistence 10** (S1 false alarms 0.0%, S6 2.5%, S2 detected 100% at a median delay of 46 decisions, S3 detected 97.5% at 195).
+* CUSUM has **no feasible point** on the grid (best: h=10, S1 false alarms 2.5%, S6 8.5%; CUSUM reacts to the per-block success noise of S6). By the pre-registered rule the simpler WINDOW detector is frozen. CUSUM is still run on the held-out streams and reported as a non-selected comparison.
+* Observed on development data, reported because it constrains what can be claimed: the S6 (noisy) false-alarm constraint is what forces the conservative confidence; at the aggressive points (0.95, 3) the monitor raised false alarms in 20% (S1) and 45% (S6) of stable streams, and S3 (gradual) detection takes about 4x longer than S2.
+
+**Frozen configuration for every held-out run:** `detector WINDOW, confidence 0.995, persistence 10, window 40, min_samples 20, suspect_confidence 0.90, success_tolerance 0.10, cost_tolerance 0.30, utility_tolerance 0.30, clear_after 10, mismatch_min 5, min_quarantine 50, recovery_threshold 0.05, recovery_confidence 0.80, min_recovery_samples 30, recovery_persistence 3, probe_rate 0.25, probe_budget 150, max_episodes 3, cusum_shift 0.15`. These are the code defaults of `DriftParams`; `max_evidence_age_days` is set only by S8b.
+
+Held-out run (seeds 7000000-7000299 monitor-only comparisons, 7000000-7000099 controllers in the loop): `ee-ctl drift-sim --seed-start 7000000 --seeds 100 --variants m61 m62_shadow m62` and `--variants monitor --seeds 300`, plus `--detector CUSUM --threshold 10 --variants monitor` for the non-selected comparison.

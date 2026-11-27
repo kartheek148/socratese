@@ -256,6 +256,7 @@ class SqlControllerPolicyStore:
 # ---- decision log (learning plane read side) ----------------------------------------------------
 PD = t.policy_decisions
 RO = t.run_outcomes
+TR = t.task_runs
 
 
 def _actions_from_snapshot(
@@ -347,6 +348,10 @@ def _record_of(m: sa.RowMapping) -> DecisionOutcomeRecord:
         actions=actions,
         default_key=default,
         propensities=propensities,
+        observed_at=m["observed_at"],
+        runtime_version=m["runtime_version"],
+        verifier_version=m["verifier_version"],
+        latency_ms=m["execution_time_ms"],
     )
 
 
@@ -370,8 +375,14 @@ class SqlDecisionLog:
             PD.c.acted,
             RO.c.status,
             RO.c.tokens_used,
+            RO.c.verifier_version,
+            RO.c.execution_time_ms,
+            RO.c.created_at.label("observed_at"),
+            TR.c.runtime_version,
         ).select_from(
-            PD.join(RO, sa.and_(PD.c.run_id == RO.c.run_id, PD.c.tenant_id == RO.c.tenant_id))
+            PD.join(RO, sa.and_(PD.c.run_id == RO.c.run_id, PD.c.tenant_id == RO.c.tenant_id)).join(
+                TR, sa.and_(PD.c.run_id == TR.c.run_id, PD.c.tenant_id == TR.c.tenant_id)
+            )
         )
 
     def outcome_records(

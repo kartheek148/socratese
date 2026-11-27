@@ -374,3 +374,62 @@ def summarize(
 
 def result_to_json(r: StreamResult) -> dict[str, Any]:
     return asdict(r)
+
+
+# ---- calibration (development streams only) -----------------------------------------------------
+@dataclass(frozen=True)
+class GridPoint:
+    detector: str
+    confidence: float
+    persistence: int
+    threshold: float = 6.0
+
+    def params(self, base: DriftParams) -> DriftParams:
+        from experience_engine.domain.drift import Detector
+
+        return base.model_copy(
+            update={
+                "detector": Detector(self.detector),
+                "confidence": self.confidence,
+                "persistence": self.persistence,
+                "cusum_threshold": self.threshold,
+            }
+        )
+
+    def label(self) -> str:
+        extra = f", h={self.threshold:g}" if self.detector == "CUSUM" else ""
+        return (
+            f"{self.detector} (confidence {self.confidence:g}, "
+            f"persistence {self.persistence}{extra})"
+        )
+
+
+def calibration_task(
+    sid: str, seed: int, grid: Sequence[GridPoint], base: DriftParams
+) -> dict[GridPoint, FamilyScore]:
+    """Monitor-only score of one development stream at every grid point (first family)."""
+    from experience_engine.controller.scenarios import SCENARIOS
+
+    scenario = SCENARIOS[sid]
+    stream = build_stream(scenario, seed)
+    out: dict[GridPoint, FamilyScore] = {}
+    first = scenario.families[0].name
+    for g in grid:
+        ts, _ = monitor_only(stream, g.params(base))
+        out[g] = score_family(first, stream.material[first], ts, scenario.n)
+    return out
+
+
+def point_summary(scores: Sequence[FamilyScore]) -> dict[str, Any]:
+    n = len(scores)
+    drift = [s for s in scores if s.onset is not None]
+    delays = [s.delay for s in drift if s.delay is not None]
+    return {
+        "n": n,
+        "false_alarm": sum(1 for s in scores if s.false_alarms) / max(1, n),
+        "drifted": sum(1 for s in scores if s.drifted_positions) / max(1, n),
+        "detected": (sum(1 for s in drift if s.first_detection is not None) / len(drift))
+        if drift
+        else None,
+        "median_delay": statistics.median(delays) if delays else None,
+    }

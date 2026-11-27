@@ -23,6 +23,7 @@ from experience_engine.domain.controller import (
     action_key,
 )
 from experience_engine.domain.decision import Strategy
+from experience_engine.domain.evidence import EvidenceKind
 from experience_engine.domain.experiment import ExperimentResult, RunRow
 from experience_engine.domain.outcome import OutcomeStatus
 from experience_engine.evaluation.task_stats import task_binary
@@ -162,6 +163,7 @@ def paired_tasks(
         refs.add(ref)
         used_splits.add(a_known[0].split)
     cfg = result.config
+    stress = cfg.mode == "stress" or "STRESS_FIXTURE" in cfg.capability_catalog_states
     source = PairedSource(
         name=name,
         arms=[PLANNING_ARM, CAPABILITY_ARM],
@@ -178,6 +180,10 @@ def paired_tasks(
         tasks_sha256=tasks_hash(tasks),
         validation_tokens=sum(tok for t in tasks for _, tok in t.outcomes.values()),
         capabilities=sorted(refs),
+        evidence_kind=(
+            EvidenceKind.STRESS_FIXTURE if stress else EvidenceKind.EXPERIMENT_FILE
+        ).value,
+        production_eligible=False,  # a result file is never a production prior
     )
     return tasks, source
 

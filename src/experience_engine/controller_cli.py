@@ -27,11 +27,12 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from experience_engine import RUNTIME_VERSION
+from experience_engine import RUNTIME_VERSION, drift_commands
 from experience_engine.adapters.artifacts.local_fs import LocalFsArtifactStore
 from experience_engine.adapters.clock import SystemClock
 from experience_engine.adapters.db.controller_store import SqlControllerPolicyStore, SqlDecisionLog
 from experience_engine.adapters.db.engine import InfraSettings, make_engine
+from experience_engine.adapters.db.registry_store import SqlRegistryStore
 from experience_engine.adapters.db.run_lifecycle import SqlRunLifecycle
 from experience_engine.bench.dataset import BenchTask, DatasetLoader, EvaluatorAccess
 from experience_engine.bench.environment import ENVIRONMENT_VERSION, SimulatedEnvironment
@@ -44,6 +45,11 @@ from experience_engine.controller.datasets import (
     with_protected_share,
 )
 from experience_engine.controller.estimator import build_snapshot
+from experience_engine.controller.evidence_quality import (
+    ServingContext,
+    assess_evidence,
+    source_and_cell,
+)
 from experience_engine.controller.gates import (
     ShadowPair,
     evaluate_canary,
@@ -63,6 +69,8 @@ from experience_engine.domain.controller import (
     ControllerKind,
     ControllerParams,
     ControllerPolicyDefinition,
+    PairedCell,
+    PairedSource,
 )
 from experience_engine.domain.experiment import (
     ExperimentConfig,
@@ -116,14 +124,99 @@ def _params(
         raw["exploration_families"] = list(args.explore_families or [])
         raw["exploration_risk_levels"] = ["low"] if args.explore_families else []
         raw["epsilon"] = args.epsilon
-    if with_evidence or kind == "evidence":
+    drift_mode = getattr(args, "drift_monitor", None)
+    if with_evidence or kind == "evidence" or drift_mode:
+        evidence: dict[str, object] = {}
         drift_min_n = getattr(args, "drift_min_n", None)
-        raw["evidence"] = {} if drift_min_n is None else {"drift_min_n": drift_min_n}
+        if drift_min_n is not None:
+            evidence["drift_min_n"] = drift_min_n
+        if getattr(args, "paired_from_registry", None) and not getattr(
+            args, "allow_research", False
+        ):
+            evidence["require_production_eligible"] = True
+        raw["evidence"] = evidence
+    if drift_mode:
+        monitor: dict[str, object] = {"mode": drift_mode.upper()}
+        for src, dst in (
+            ("drift_detector", "detector"),
+            ("drift_confidence", "confidence"),
+            ("drift_persistence", "persistence"),
+        ):
+            if getattr(args, src, None) is not None:
+                monitor[dst] = getattr(args, src)
+        raw["drift"] = monitor
     return ControllerParams.model_validate(raw)
 
 
+def _registry_prior(args: argparse.Namespace, params: ControllerParams) -> PairedPrior:
+    """A prior from stored promotion evaluations (final-outcome evidence), eligibility-checked.
+
+    Ineligible evidence cannot seed a production prior (exit 2 with every failed gate listed);
+    `--allow-research` takes it anyway and records it as not production-eligible."""
+    assert params.evidence is not None
+    engine = make_engine(InfraSettings.from_env().database_url)
+    registry = SqlRegistryStore(engine)
+    ctx = ServingContext(
+        tenant_id=args.tenant,
+        runtime_version=RUNTIME_VERSION,
+        verifier_version=SimulationVerifier().version,
+        environment_version=ENVIRONMENT_VERSION,
+        n_min_pairs=params.evidence.n_min_pairs,
+        max_age_days=params.drift.max_evidence_age_days if params.drift else None,
+        now=SystemClock().now(),
+        allow_version_mismatch=args.allow_version_mismatch,
+    )
+    cells: dict[str, PairedCell] = {}
+    sources: list[PairedSource] = []
+    seen: set[str] = set()
+    failures: list[str] = []
+    for ref in args.paired_from_registry:
+        cap, _, ver = ref.partition("@")
+        recs = [
+            r
+            for r in registry.evaluation_records(args.tenant, cap, int(ver))
+            if r.serving is not None
+        ]
+        if args.evaluation_id:
+            recs = [r for r in recs if r.evaluation_id in args.evaluation_id]
+        if not recs:
+            raise SystemExit(
+                f"no stored evaluation of {ref} recorded final-outcome evidence "
+                "(run `ee-eval evaluate --serving-evidence`)"
+            )
+        rec = recs[-1]  # the latest evaluation; earlier ones stay in the registry untouched
+        key, cell, source, facts = source_and_cell(rec)
+        a = assess_evidence(key, cell, facts, ctx, seen_evaluations=frozenset(seen))
+        seen.add(rec.evaluation_id)
+        print(
+            f"evidence {ref} (evaluation {rec.evaluation_id[:8]}): "
+            f"{'ELIGIBLE' if a.eligible else 'NOT eligible'}; {cell.n} verified pairs"
+        )
+        for why in a.reasons:
+            print(f"  - {why}")
+        for note in a.overrides:
+            print(f"  ! override recorded: {note}")
+        if not a.eligible:
+            failures += [f"{ref}: {why}" for why in a.reasons]
+        if a.eligible or args.allow_research:
+            cells[key] = cell
+            sources.append(
+                source.model_copy(
+                    update={"production_eligible": a.eligible, "overrides": a.overrides}
+                )
+            )
+    if failures and not args.allow_research:
+        raise SystemExit(
+            "no production-eligible prior can be built (use --allow-research to record the "
+            "evidence as research-only):\n  " + "\n  ".join(failures)
+        )
+    return PairedPrior(cells=cells, sources=sources)
+
+
 def _prior_from(args: argparse.Namespace, params: ControllerParams) -> PairedPrior | None:
-    """The paired prior of `--paired-from`, refusing sources whose runtime/verifier differ."""
+    """The paired prior of `--paired-from` (research files) or `--paired-from-registry`."""
+    if getattr(args, "paired_from_registry", None):
+        return _registry_prior(args, params)
     if not args.paired_from:
         return None
     assert params.evidence is not None
@@ -151,7 +244,7 @@ def _cmd_train(args: argparse.Namespace) -> int:
     records = log.outcome_records(args.tenant, policy_versions=args.policy_versions)
     if args.last:
         records = records[-args.last :]
-    params = _params(args, with_evidence=bool(args.paired_from))
+    params = _params(args, with_evidence=bool(args.paired_from or args.paired_from_registry))
     prior = _prior_from(args, params)
     snap = build_snapshot(records, args.tenant, params, prior=prior)
     version = max((r.version for r in store.list_versions(args.tenant, args.policy_id)), default=0)
@@ -664,6 +757,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     tr.add_argument("--paired-families", nargs="*", default=None)
     tr.add_argument(
+        "--paired-from-registry",
+        nargs="+",
+        default=None,
+        metavar="CAPABILITY@VERSION",
+        help="build the prior from stored promotion evaluations (M6.2): eligibility-checked "
+        "final-outcome evidence; implies the production-eligibility gate",
+    )
+    tr.add_argument("--evaluation-id", nargs="*", default=None)
+    tr.add_argument(
+        "--allow-research",
+        action="store_true",
+        help="with --paired-from-registry: accept ineligible evidence, recorded as research-only",
+    )
+    tr.add_argument(
+        "--drift-monitor",
+        choices=["shadow", "enforce"],
+        default=None,
+        help="attach the M6.2 windowed drift monitor (needs a paired prior)",
+    )
+    tr.add_argument("--drift-detector", choices=["WINDOW", "CUSUM"], default=None)
+    tr.add_argument("--drift-confidence", type=float, default=None)
+    tr.add_argument("--drift-persistence", type=int, default=None)
+    tr.add_argument(
         "--allow-version-mismatch",
         action="store_true",
         help="accept paired sources recorded under another runtime or verifier version",
@@ -780,6 +896,7 @@ def main(argv: list[str] | None = None) -> int:
     lv.add_argument("--canary-fraction", type=float, default=0.2)
     lv.set_defaults(func=_cmd_live)
 
+    drift_commands.register(sub)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

@@ -33,6 +33,7 @@ from experience_engine.domain.evaluation import (
     CounterfactualVerdict,
     EvaluationReport,
     LifecycleCost,
+    ServingEvidence,
     Suite,
     TaskResult,
     Verdict,
@@ -48,6 +49,7 @@ from experience_engine.evaluation.policy import pooled, success_lower_bound
 from experience_engine.evaluation.risk import build_risk_evidence
 from experience_engine.evaluation.risk_policy import decide
 from experience_engine.evaluation.sequential import RunPair, StagePlan, stop_reasons
+from experience_engine.evaluation.serving_evidence import build_serving_evidence
 from experience_engine.evaluation.validation_cost import resources_from_rows
 from experience_engine.ports.clock import Clock
 
@@ -96,6 +98,10 @@ class EvaluationPlan:
     # optional staged validation with predefined stopping rules (never an early PASS)
     counterfactual_policies: list[AnyPolicy] = field(default_factory=list)
     stages: StagePlan | None = None
+    # M6.2: the capability as production serves it (planner fallback), run on the held-out and
+    # transfer tasks after and independently of the verdict; records final-outcome paired evidence
+    serving_arm: ArmRunner | None = None
+    serving_capability_hash: str = ""
 
 
 def _metrics(
@@ -165,26 +171,24 @@ def synthetic_negatives(
 
 
 def _config_hash(plan: EvaluationPlan, seeds: list[int]) -> str:
-    blob = json.dumps(
-        {
-            "policy": plan.policy.policy_hash(),
-            "seeds": seeds,
-            "datasets": {
-                k: {"name": v.name, "version": v.version, "content_hash": v.content_hash}
-                for k, v in sorted(plan.datasets.items())
-            },
-            "model": plan.model_settings,
-            "runtime": RUNTIME_VERSION,
-            "verifier": plan.verifier_version,
-            "environment": ENVIRONMENT_VERSION,
-            "evaluator": EVALUATOR_VERSION,
-            "stages": plan.stages.config() if plan.stages else None,
-            "treatment": plan.treatment.value,
+    cfg: dict[str, object] = {
+        "policy": plan.policy.policy_hash(),
+        "seeds": seeds,
+        "datasets": {
+            k: {"name": v.name, "version": v.version, "content_hash": v.content_hash}
+            for k, v in sorted(plan.datasets.items())
         },
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
+        "model": plan.model_settings,
+        "runtime": RUNTIME_VERSION,
+        "verifier": plan.verifier_version,
+        "environment": ENVIRONMENT_VERSION,
+        "evaluator": EVALUATOR_VERSION,
+        "stages": plan.stages.config() if plan.stages else None,
+        "treatment": plan.treatment.value,
+    }
+    if plan.serving_arm is not None:  # absent otherwise: every earlier config hash is unchanged
+        cfg["serving"] = Arm.SERVING.value
+    blob = json.dumps(cfg, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -230,6 +234,9 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
             t_seed = CURRENT_SEED.set(job[3])
             t_data = CURRENT_DATASET.set(dataset_hash(job[0]))
             try:
+                if job[1] == Arm.SERVING:
+                    assert plan.serving_arm is not None
+                    return plan.serving_arm(job[2])
                 return plan.arms[job[1]](job[2])
             finally:
                 CURRENT_DATASET.reset(t_data)
@@ -260,6 +267,9 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
                 cache_hit=o.cache_hit,
                 prompt_tokens=o.prompt_tokens,
                 completion_tokens=o.completion_tokens,
+                capability_used=o.capability_used if arm == Arm.SERVING else None,
+                fell_back=o.fell_back if arm == Arm.SERVING else None,
+                asset_ref=o.asset_ref if arm == Arm.SERVING else None,
             )
         )
 
@@ -425,6 +435,25 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
                     policy_name=other.name, policy_hash=other.policy_hash(), verdict=v, reasons=why
                 )
             )
+    serving: ServingEvidence | None = None
+    if plan.serving_arm is not None and not early:
+        # after and independent of the verdict: nothing above reads these rows
+        s_jobs: list[Job] = [
+            (suite, Arm.SERVING, t, sd)
+            for suite in (Suite.HELD_OUT, Suite.TRANSFER)
+            for t in suite_tasks[suite]
+            for sd in seeds
+            if (suite, Arm.BASELINE, t.task.task_id, sd) in results
+        ]
+        for job, o in zip(s_jobs, run_all(s_jobs), strict=True):
+            record(job[0], job[1], job[2], o, job[3])
+        serving = build_serving_evidence(
+            rows,
+            capability_ref=f"{d.asset_id}@{d.version}",
+            family=family,
+            risk_class=risk,
+            capability_hash=plan.serving_capability_hash,
+        )
     return EvaluationReport(
         capability_id=d.asset_id,
         asset_kind=plan.asset_kind,
@@ -463,4 +492,5 @@ def evaluate(plan: EvaluationPlan) -> EvaluationReport:
         resources=resources_from_rows(
             rows, early_stopped=bool(early), stage_reached=stage_reached if plan.stages else None
         ),
+        serving_evidence=serving,
     )

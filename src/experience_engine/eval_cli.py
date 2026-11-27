@@ -42,7 +42,7 @@ from experience_engine.capabilities.registry import (
     RegistryService,
 )
 from experience_engine.domain.benchmark import AgentConfig, ModelSettings, Split
-from experience_engine.domain.capability import CapabilityState
+from experience_engine.domain.capability import CapabilityState, definition_hash
 from experience_engine.domain.evaluation import Arm
 from experience_engine.domain.experience import PIPELINE_VERSION, Trajectory
 from experience_engine.evaluation.arms import (
@@ -54,10 +54,16 @@ from experience_engine.evaluation.arms import (
 )
 from experience_engine.evaluation.baseline_cache import make_baseline_store
 from experience_engine.evaluation.engine import EvaluationPlan, evaluate
+from experience_engine.evaluation.experiment_arms import make_runtime_arm
 from experience_engine.evaluation.policy import POLICY_SETS, builtin_policies, load_policies
 from experience_engine.evaluation.report import render_evaluation
 from experience_engine.evaluation.sequential import StagePlan
 from experience_engine.evaluation.validation_cost import format_resources
+from experience_engine.execution.capability_runtime import (
+    CapabilityRuntime,
+    StaticCapabilityCatalog,
+)
+from experience_engine.execution.matcher import CapabilityMatcher
 from experience_engine.execution.protocol import PROMPT_VERSION
 from experience_engine.ports.decisions import DecisionProvider
 from experience_engine.ports.llm import LLMClient
@@ -151,6 +157,24 @@ def _cmd_evaluate(args: argparse.Namespace, ctx: "_Ctx") -> int:
         else []
     )
     tokens, wall = _learning_cost(ctx, args.tenant, rec.definition.provenance.source_run_ids)
+    serving_arm: ArmRunner | None = None
+    if args.serving_evidence:
+        # the capability as production serves it (planner fallback); evaluation catalog only
+        catalog = StaticCapabilityCatalog(args.tenant, [rec.definition])
+        runtime = CapabilityRuntime(
+            catalog=catalog,
+            matcher=CapabilityMatcher(catalog),
+            decisions_for=lambda _llm: decisions,
+            experimental=True,
+        )
+        serving_arm = make_runtime_arm(
+            llm=llm,
+            config=config,
+            verifier=verifier,
+            clock=clock,
+            runtime=runtime,
+            tenant_id=args.tenant,
+        )
     plan = EvaluationPlan(
         tenant_id=args.tenant,
         definition=rec.definition,
@@ -174,6 +198,8 @@ def _cmd_evaluate(args: argparse.Namespace, ctx: "_Ctx") -> int:
         learning_wall_ms=wall,
         counterfactual_policies=list(cf),
         stages=StagePlan() if args.staged else None,
+        serving_arm=serving_arm,
+        serving_capability_hash=definition_hash(rec.definition) if serving_arm else "",
     )
     if limit:
         plan.heldout_tasks = plan.heldout_tasks[: limit * 4]
@@ -327,6 +353,12 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--baseline-cache", default=None, help="directory of reusable baseline runs")
     ev.add_argument("--staged", action="store_true", help="predefined sequential stopping rules")
     ev.add_argument("--skip-memory-control", action="store_true")
+    ev.add_argument(
+        "--serving-evidence",
+        action="store_true",
+        help="also run the capability as production serves it (planner fallback) on the held-out "
+        "and transfer tasks and record final-outcome paired evidence (never gates promotion)",
+    )
     ev.add_argument(
         "--counterfactual-policy-set",
         choices=POLICY_SETS,

@@ -83,6 +83,19 @@ def evaluate_offline(
     pending: list[str] = []
     if paired and (not sources or any(not s.tasks_sha256 or s.n_pairs <= 0 for s in sources)):
         fail.append("paired priors without complete provenance (source, task hash, size)")
+    ev = definition.params.evidence
+    if paired and ev is not None and ev.require_production_eligible:
+        ineligible = [s.name for s in sources if s.production_eligible is not True]
+        metrics["prior_sources_ineligible"] = len(ineligible)
+        if ineligible:
+            fail.append(f"paired prior source(s) not production-eligible: {', '.join(ineligible)}")
+    dp = definition.params.drift
+    if dp is not None:
+        metrics["drift_mode"] = dp.mode.value
+        metrics["drift_detector"] = dp.detector.value
+        metrics["drift_config_hash"] = dp.config_hash()
+        if not paired:
+            fail.append("the drift monitor is configured but the policy has no paired prior")
     if est.protected_deviations > g.max_protected_deviations:
         fail.append(
             f"{est.protected_deviations} protected-class deviation(s) from the rule baseline"

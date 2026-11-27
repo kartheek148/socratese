@@ -9,6 +9,7 @@ from experience_engine.adapters.db.asset_spec import AssetSpec, capability_spec
 from experience_engine.adapters.db.run_lifecycle import write_audit
 from experience_engine.domain.capability import CapabilityDefinition, CapabilityState
 from experience_engine.domain.evaluation import EvaluationReport, Suite, Verdict
+from experience_engine.domain.evidence import EvaluationRecord
 from experience_engine.domain.ids import new_id
 from experience_engine.domain.trace import ArtifactRef
 from experience_engine.ports.registry import (
@@ -219,6 +220,11 @@ class SqlAssetRegistryStore[D]:
                         "counterfactuals": [
                             c.model_dump(mode="json") for c in report.counterfactuals
                         ],
+                        **(
+                            {"serving_evidence": report.serving_evidence.model_dump(mode="json")}
+                            if report.serving_evidence is not None
+                            else {}
+                        ),
                     },
                     reasons=report.reasons,
                     dataset_versions=report.dataset_versions,
@@ -253,6 +259,47 @@ class SqlAssetRegistryStore[D]:
         if row is None:
             return None
         return EvaluationSummary(row[0], Verdict(row[1]), row[2], row[3])
+
+    def evaluation_records(
+        self, tenant_id: str, capability_id: str, version: int
+    ) -> list[EvaluationRecord]:
+        """Every stored evaluation of one version, oldest first (append-only; never rewritten)."""
+        e, idc = self._spec.evaluations, self._spec.id_col
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    sa.select(e)
+                    .where(
+                        e.c.tenant_id == tenant_id,
+                        e.c[idc] == capability_id,
+                        e.c.version == version,
+                    )
+                    .order_by(e.c.completed_at, e.c.evaluation_id)
+                )
+                .mappings()
+                .all()
+            )
+        return [
+            EvaluationRecord(
+                evaluation_id=str(r["evaluation_id"]),
+                tenant_id=r["tenant_id"],
+                capability_id=r[idc],
+                version=r["version"],
+                verdict=r["verdict"],
+                risk_class=r["risk_class"],
+                runtime_version=r["runtime_version"],
+                verifier_version=r["verifier_version"],
+                environment_version=r["environment_version"],
+                evaluator_version=r["evaluator_version"],
+                report_sha256=r["report_sha256"],
+                completed_at=r["completed_at"],
+                model_settings=dict(r["model_settings"]),
+                dataset_versions=dict(r["dataset_versions"]),
+                metrics=dict(r["metrics"]),
+                seeds=list(r["seeds"]),
+            )
+            for r in rows
+        ]
 
     def record_observation(
         self,
