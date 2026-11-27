@@ -189,6 +189,7 @@ class RevalTrial(_F):
     key: TrialKey
     result: TrialResult
     anchor: str
+    round_at: datetime | None = None  # start of the learning-plane round that ran it
     accepted: bool = True
     reject_reason: RejectReason | None = None
 

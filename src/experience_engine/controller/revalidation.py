@@ -558,8 +558,13 @@ def step_case(
             reject = RejectReason.VERSION_MISMATCH
         out.trials.append(
             RevalTrial(
-                key=key, result=res, anchor=anchor, accepted=reject is None, reject_reason=reject
-            )  # fmt: skip
+                key=key,
+                result=res,
+                anchor=anchor,
+                round_at=now,
+                accepted=reject is None,
+                reject_reason=reject,
+            )
         )
         out.tokens += res.tokens
         spent += res.tokens
@@ -856,3 +861,70 @@ def cell_reference_of(
         tokens_alt=cell.alt_tokens, tokens_def=cell.default_tokens, runtime_version=runtime,
         verifier_version=verifier,
     )  # fmt: skip
+
+
+# ---- replay ------------------------------------------------------------------------------------
+class ReplaySource:
+    """Serves persisted trials (by case, cycle, stage and ordinal) and the executor facts recorded
+    on persisted transitions. It never executes anything: a request with no persisted trial
+    returns None, so a replay stops exactly where the stored evidence stops."""
+
+    def __init__(
+        self,
+        trials: Iterable[RevalTrial],
+        transitions: Iterable[RevalTransition],
+        tenant_id: str,
+    ):
+        self._tenant = tenant_id
+        self._trials = {t.key.ident(): t.result for t in trials}
+        self._facts: dict[str, list[tuple[datetime, ExecutorFacts]]] = {}
+        for tr in sorted(transitions, key=lambda x: (x.observed_at or datetime.min, x.seq)):
+            if tr.facts and tr.observed_at is not None:
+                self._facts.setdefault(tr.cell_key, []).append(
+                    (tr.observed_at, ExecutorFacts.model_validate(tr.facts))
+                )
+
+    def facts(self, ref: CellReference, now: datetime) -> ExecutorFacts:
+        known = [f for at, f in self._facts.get(ref.cell_key, []) if at <= now]
+        return known[-1] if known else ExecutorFacts(tenant_id=self._tenant)
+
+    def run(self, ref: CellReference, key: TrialKey, at: datetime) -> TrialResult | None:
+        return self._trials.get(key.ident())
+
+
+def replay_revalidation(
+    refs: Sequence[CellReference],
+    drift: DriftParams,
+    params: RevalidationParams,
+    tenant_id: str | None,
+    records: Sequence[DecisionOutcomeRecord],
+    transitions: Sequence[RevalTransition],
+    trials: Sequence[RevalTrial],
+) -> RevalidationFleet:
+    """Recompute the fleet from the ordered outcomes and the persisted evidence only."""
+    fleet = RevalidationFleet(refs, drift, params, tenant_id)
+    source = ReplaySource(trials, transitions, tenant_id or "")
+    index = {r.decision_id: n for n, r in enumerate(records)}
+    pos = 0
+    for anchor, now in _round_times(transitions, trials):
+        upto = index[anchor] + 1 if anchor in index else 0
+        fleet.ingest(records[pos:upto])
+        pos = max(pos, upto)
+        fleet.step(source, anchor, now)
+    fleet.ingest(records[pos:])
+    return fleet
+
+
+def _round_times(
+    transitions: Sequence[RevalTransition], trials: Sequence[RevalTrial]
+) -> list[tuple[str, datetime]]:
+    """Rounds that left evidence, as (anchor, round start), in time order. A transition is stamped
+    with its round's start and a trial carries it in `round_at`; case openings are not rounds
+    (they are derived from observations)."""
+    rounds: set[tuple[str, datetime]] = set()
+    for tr in transitions:
+        if tr.trigger != RevalTrigger.CASE_OPENED and tr.observed_at is not None:
+            rounds.add((tr.anchor, tr.observed_at))
+    for t in trials:
+        rounds.add((t.anchor, t.round_at or t.result.observed_at))
+    return sorted(rounds, key=lambda r: (r[1], r[0]))

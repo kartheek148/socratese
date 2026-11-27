@@ -643,6 +643,8 @@ APPEND_ONLY_TABLES = (
     "controller_policy_evaluations",
     "controller_policy_transitions",
     "controller_drift_transitions",
+    "controller_revalidation_transitions",
+    "controller_revalidation_trials",
 )
 
 
@@ -786,4 +788,143 @@ controller_drift_transitions = sa.Table(
     sa.CheckConstraint("mode IN ('SHADOW','ENFORCE')", name="mode"),
     sa.CheckConstraint("seq >= 1", name="seq_positive"),
     sa.Index("ix_controller_drift_transitions_version", "tenant_id", "policy_id", "version"),
+)
+
+
+# ---- M6.3: controlled revalidation of quarantined cells -----------------------------------------
+REVAL_STATES = (
+    "QUARANTINED",
+    "REVALIDATION_PENDING",
+    "REVALIDATING",
+    "RECOVERY_CANDIDATE",
+    "RECOVERED",
+    "EXPIRED",
+    "BUDGET_EXHAUSTED",
+)
+REVAL_TRIGGERS = (
+    "CASE_OPENED",
+    "INELIGIBLE",
+    "READY",
+    "TRIALS_STARTED",
+    "CRITERIA_MET",
+    "CRITERIA_NOT_MET",
+    "CONFIRMED",
+    "CONFIRMATION_FAILED",
+    "VERIFICATION_UNAVAILABLE",
+    "LINEAGE_VIOLATION",
+    "CYCLES_EXHAUSTED",
+    "TRIAL_CAP",
+    "TOKEN_CAP",
+    "LIFETIME_BUDGET",
+    "TTL_EXPIRED",
+    "CYCLE_EXPIRED",
+)
+REVAL_REASONS = (
+    "STATISTICAL_DRIFT",
+    "PERFORMANCE_DEGRADATION",
+    "COST_DEGRADATION",
+    "VERIFICATION_FAILURE",
+    "STRUCTURAL_INVALIDATION",
+    "EVIDENCE_STALE",
+    "UNKNOWN",
+)
+REVAL_STRATEGIES = ("FIXED", "EVIDENCE_THRESHOLD", "SEQUENTIAL")
+TRIAL_VERDICTS = (
+    "SUCCESS",
+    "FAILURE",
+    "TIMEOUT",
+    "INVALID_OUTPUT",
+    "VERIFICATION_UNAVAILABLE",
+)
+REJECT_REASONS = ("NOT_NEWER", "TENANT_MISMATCH", "DUPLICATE", "VERSION_MISMATCH")
+
+
+def _in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN (" + ",".join(f"'{x}'" for x in values) + ")"
+
+
+controller_revalidation_transitions = sa.Table(
+    "controller_revalidation_transitions",
+    metadata,
+    sa.Column("transition_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("policy_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("cell_key", sa.Text, nullable=False),
+    sa.Column("episode", sa.Integer, nullable=False),
+    sa.Column("cycle", sa.Integer, nullable=False),
+    sa.Column("seq", sa.Integer, nullable=False),
+    sa.Column("from_state", sa.Text),
+    sa.Column("to_state", sa.Text, nullable=False),
+    sa.Column("trigger", sa.Text, nullable=False),
+    sa.Column("reason", sa.Text, nullable=False),
+    sa.Column("strategy", sa.Text, nullable=False),
+    sa.Column("measurements", JSONB, nullable=False),
+    sa.Column("detail", JSONB, nullable=False),
+    sa.Column("facts", JSONB, nullable=False),
+    sa.Column("rebase", JSONB, nullable=False),
+    sa.Column("n_trials", sa.Integer, nullable=False),
+    sa.Column("n_unverified", sa.Integer, nullable=False),
+    sa.Column("tokens_cycle", sa.Integer, nullable=False),
+    sa.Column("anchor", sa.Text, nullable=False),
+    sa.Column("observed_at", _ts()),
+    sa.Column("params_hash", sa.Text, nullable=False),
+    sa.Column("config", JSONB, nullable=False),
+    sa.Column("applied", sa.Boolean, nullable=False),
+    sa.Column("log_version", sa.Text, nullable=False),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_CTRL_VERSION_FK),
+    sa.UniqueConstraint("tenant_id", "policy_id", "version", "cell_key", "seq"),
+    sa.CheckConstraint(
+        "from_state IS NULL OR " + _in("from_state", REVAL_STATES), name="from_state"
+    ),
+    sa.CheckConstraint(_in("to_state", REVAL_STATES), name="to_state"),
+    sa.CheckConstraint(_in("trigger", REVAL_TRIGGERS), name="trigger"),
+    sa.CheckConstraint(_in("reason", REVAL_REASONS), name="reason"),
+    sa.CheckConstraint(_in("strategy", REVAL_STRATEGIES), name="strategy"),
+    sa.CheckConstraint("seq >= 1", name="seq_positive"),
+    sa.Index("ix_controller_revalidation_transitions_version", "tenant_id", "policy_id", "version"),
+)
+
+controller_revalidation_trials = sa.Table(
+    "controller_revalidation_trials",
+    metadata,
+    sa.Column("trial_id", _uuid(), primary_key=True),
+    sa.Column("tenant_id", sa.Text, nullable=False),
+    sa.Column("policy_id", sa.Text, nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("cell_key", sa.Text, nullable=False),
+    sa.Column("episode", sa.Integer, nullable=False),
+    sa.Column("cycle", sa.Integer, nullable=False),
+    sa.Column("stage", sa.Text, nullable=False),
+    sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.Column("anchor", sa.Text, nullable=False),
+    sa.Column("round_at", _ts()),
+    sa.Column("task_ref", sa.Text, nullable=False),
+    sa.Column("verdict", sa.Text, nullable=False),
+    sa.Column("tokens", sa.Integer, nullable=False),
+    sa.Column("latency_ms", sa.Integer),
+    sa.Column("runtime_version", sa.Text),
+    sa.Column("verifier_version", sa.Text),
+    sa.Column("capability_ref", sa.Text),
+    sa.Column("result_tenant_id", sa.Text),
+    sa.Column("observed_at", _ts(), nullable=False),
+    sa.Column("accepted", sa.Boolean, nullable=False),
+    sa.Column("reject_reason", sa.Text),
+    sa.Column("created_at", _ts(), nullable=False),
+    sa.ForeignKeyConstraint(*_CTRL_VERSION_FK),
+    sa.UniqueConstraint(
+        "tenant_id", "policy_id", "version", "cell_key", "episode", "cycle", "stage", "ordinal"
+    ),
+    sa.CheckConstraint("stage IN ('EVIDENCE','CONFIRMATION')", name="stage"),
+    sa.CheckConstraint(_in("verdict", TRIAL_VERDICTS), name="verdict"),
+    sa.CheckConstraint(
+        "reject_reason IS NULL OR " + _in("reject_reason", REJECT_REASONS), name="reject_reason"
+    ),
+    sa.CheckConstraint(
+        "(accepted AND reject_reason IS NULL) OR (NOT accepted AND reject_reason IS NOT NULL)",
+        name="accepted_consistent",
+    ),
+    sa.CheckConstraint("tokens >= 0", name="tokens_nonnegative"),
+    sa.Index("ix_controller_revalidation_trials_version", "tenant_id", "policy_id", "version"),
 )

@@ -229,3 +229,62 @@ def test_0007_downgrades_cleanly_when_no_audit_rows_exist(scratch_database: str)
     migrate(scratch_database)  # and it can be re-applied
     assert "controller_drift_transitions" in _tables(engine)
     engine.dispose()
+
+
+def test_0008_adds_append_only_revalidation_tables_and_never_rewrites_history(
+    scratch_database: str,
+) -> None:
+    migrate(scratch_database, "0007")
+    engine = sa.create_engine(scratch_database)
+    for name in ("controller_revalidation_transitions", "controller_revalidation_trials"):
+        assert name not in _tables(engine)
+    with engine.begin() as conn:
+        _insert_policy(conn, "EVIDENCE_DRIVEN", 1)
+    migrate(scratch_database)
+    for name in ("controller_revalidation_transitions", "controller_revalidation_trials"):
+        assert name in _tables(engine)
+        assert f"{name}_append_only" in _triggers(engine)
+    transition = (
+        "INSERT INTO controller_revalidation_transitions (transition_id, tenant_id, policy_id, "
+        "version, cell_key, episode, cycle, seq, from_state, to_state, trigger, reason, strategy, "
+        "measurements, detail, facts, rebase, n_trials, n_unverified, tokens_cycle, anchor, "
+        "params_hash, config, applied, log_version, created_at) VALUES (gen_random_uuid(), 't', "
+        "'p', :v, 'c', 1, 0, :seq, :f, :to, :trig, 'PERFORMANCE_DEGRADATION', 'FIXED', '{}', '[]', "
+        "'{}', '{}', 0, 0, 0, 'a', 'h', '{}', true, 'revalidation/1', now())"
+    )
+    ok = {"v": 1, "seq": 1, "f": None, "to": "QUARANTINED", "trig": "CASE_OPENED"}
+    with engine.begin() as conn:  # a case opens from no state
+        conn.execute(sa.text(transition), ok)
+    for bad in (
+        {**ok},  # unique (cell, seq)
+        {**ok, "seq": 2, "to": "RECOVERING"},  # not a case state
+        {**ok, "seq": 2, "trig": "TIMER_ELAPSED"},  # there is no such trigger
+        {**ok, "seq": 0},  # sequence starts at 1
+        {**ok, "seq": 2, "v": 9},  # tenant-scoped policy FK
+    ):
+        with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
+            conn.execute(sa.text(transition), bad)
+    with pytest.raises(sa.exc.DBAPIError), engine.begin() as conn:  # append-only
+        conn.execute(sa.text("UPDATE controller_revalidation_transitions SET reason = 'UNKNOWN'"))
+    with pytest.raises(sa.exc.DBAPIError, match="not rewriting history"):
+        downgrade(scratch_database, "0007")
+    with engine.connect() as conn:  # the refused downgrade lost nothing
+        assert (
+            conn.execute(
+                sa.text("SELECT count(*) FROM controller_revalidation_transitions")
+            ).scalar_one()
+            == 1
+        )
+        assert conn.execute(sa.text("SELECT count(*) FROM controller_policies")).scalar_one() == 1
+    engine.dispose()
+
+
+def test_0008_downgrades_cleanly_when_no_audit_rows_exist(scratch_database: str) -> None:
+    migrate(scratch_database)
+    engine = sa.create_engine(scratch_database)
+    downgrade(scratch_database, "0007")
+    assert "controller_revalidation_trials" not in _tables(engine)
+    assert "controller_drift_transitions" in _tables(engine)  # 0007 and earlier are intact
+    migrate(scratch_database)
+    assert "controller_revalidation_trials" in _tables(engine)
+    engine.dispose()

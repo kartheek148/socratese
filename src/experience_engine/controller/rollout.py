@@ -1,8 +1,9 @@
 """Runtime rollout wiring: canary routing, shadow attachment, controller built from the registry."""
 
 from dataclasses import dataclass
+from typing import Protocol
 
-from experience_engine.controller.drift_service import DriftService
+from experience_engine.controller.drift_service import SyncResult
 from experience_engine.controller.gates import canary_assignment
 from experience_engine.controller.policy import AdaptiveController
 from experience_engine.domain.controller import ControllerPolicyDefinition
@@ -10,6 +11,13 @@ from experience_engine.domain.decision import ControllerDecision
 from experience_engine.domain.rollout import PolicyState
 from experience_engine.execution.controller import Controller, ControllerInput
 from experience_engine.ports.controller_store import ControllerPolicyStore
+
+
+class OverlaySync(Protocol):
+    """Publishes a policy's drift overlay (the M6.2 `DriftService`, or the M6.3
+    `RevalidationService`, which also serves policies without revalidation)."""
+
+    def sync(self, definition: ControllerPolicyDefinition) -> SyncResult: ...
 
 
 class CanaryRouter:
@@ -59,7 +67,7 @@ def build_rollout(
     policy_id: str,
     baseline: Controller,
     canary_fraction: float = 0.2,
-    drift: DriftService | None = None,
+    drift: OverlaySync | None = None,
 ) -> RolloutSetup:
     """The production controller for a tenant: ACTIVE policy (else the rule baseline), with the
     CANARY candidate split in and the SHADOW candidate attached. States come from the registry,

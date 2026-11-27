@@ -82,6 +82,11 @@ class DriftService:
         dp = definition.params.drift
         if dp is None:
             return SyncResult(None)
+        if definition.params.revalidation is not None:
+            raise ValueError(
+                "this policy uses revalidation (M6.3): its monitor must be recomputed by the "
+                "RevalidationService, which applies the restorations a plain replay would miss"
+            )
         records = self._outcomes(definition.tenant_id, [definition.policy_version])
         fleet = MonitorFleet(
             references_from_snapshot(definition.snapshot), dp, definition.tenant_id
