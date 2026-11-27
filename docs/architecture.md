@@ -144,6 +144,8 @@ Selection principle: minimize expected total cost subject to reliability, permis
 
 > **Milestone 6.1 implementation:** the estimator snapshot may carry paired validation priors (default vs alternative on the same held-out tasks, final outcome including the planner fallback) and the new `EVIDENCE_DRIVEN` kind explores only while an alternative's non-inferiority bound is unresolved; the rule baseline, protected classes and all M6 definition hashes are unchanged. See [controller.md](./controller.md), [ADR 0016](./decisions/0016-evidence-driven-controller.md) and [the report](./evaluations/evidence-driven-controller-report.md).
 
+> **Milestone 6.2 implementation:** priors can come from the real evaluation workflow (final-outcome evidence, explicit eligibility gates, audited overrides) and a windowed drift monitor (`NORMAL/SUSPECT/DRIFTED/QUARANTINED/RECOVERING`, hysteresis, bounded recovery probes, persisted transitions, shadow-first rollout) can stop a stale prior from controlling decisions. It runs in the learning plane and only restricts a policy toward the rule baseline. See [controller.md](./controller.md), [ADR 0017](./decisions/0017-evidence-reliability-and-drift-monitor.md) and [the report](./evaluations/evidence-reliability-report.md).
+
 ### 4.5 Agent runtime and tool gateway
 Support:
 - deterministic capability execution;

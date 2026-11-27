@@ -7,6 +7,7 @@ Two evaluation paths share the scenarios:
   the same stream with common random numbers; used for economics, fallback and recovery.
 """
 
+import dataclasses
 import math
 import statistics
 import time
@@ -470,14 +471,21 @@ def real_streams(
     rng = random.Random(seed)
     stream_tasks = [tasks[rng.randrange(len(tasks))] for _ in range(length)]
     del default_key
+    # observations carry the versions of the evidence they are compared with: a real table
+    # recorded under the same runtime and verifier as its prior is compatible by construction
+    src = prior.sources[0] if prior.sources else None
+    pert = scen.perturbation(seed)
+    if src is not None:
+        pert = dataclasses.replace(pert, base_runtime=src.runtime_version)
     return Stream(
         scen,
         seed,
         stream_tasks,
         prior,
         0,
-        scen.perturbation(seed),
+        pert,
         scen.material_positions(seed),
+        verifier_label=src.verifier_version if src is not None else SIM_VERIFIER,
     )
 
 
@@ -487,7 +495,9 @@ def run_real_variants(
     order = list(range(stream.scenario.n))
     out: list[StreamResult] = []
     for v in variants:
-        cfg = controller_config(v, stream, base)
+        cfg = dataclasses.replace(
+            controller_config(v, stream, base), verifier_label=stream.verifier_label
+        )
         run = run_stream(
             stream.tasks, order, cfg, label=f"R-{stream.scenario.sid}-{stream.seed}-{v}"
         )

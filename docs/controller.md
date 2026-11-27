@@ -71,6 +71,36 @@ uv run ee-ctl prior-curve --prior v1.json v2.json --sizes 30 60 120 240         
 uv run ee-ctl simulate   --heldout NAME h1.json h2.json --prior v1.json v2.json --kinds bandit evidence+prior evidence   # offline, per-family cell verdicts
 ```
 
+## Evidence reliability and drift monitoring (M6.2)
+
+M6.1's prior is only as good as its provenance, and a prior can go stale. M6.2 adds (A) final-outcome evidence recorded by the real evaluation workflow with explicit eligibility gates and (B) a windowed drift monitor with an audited state machine. Audit, frozen design and protocol: [experiments/evidence-reliability-design.md](./experiments/evidence-reliability-design.md); results: [evaluations/evidence-reliability-report.md](./evaluations/evidence-reliability-report.md); ADR [0017](./decisions/0017-evidence-reliability-and-drift-monitor.md).
+
+**A. Evidence through the evaluation workflow.** `ee-eval evaluate --serving-evidence` additionally runs the capability *as production serves it* (matcher, executor, planner fallback; an evaluation-only static catalog, never an ACTIVE one) on the held-out and transfer tasks, after and independently of the promotion verdict (`Arm.SERVING`, `EvaluationPlan.serving_arm`). The paired planner-vs-served table (`ServingEvidence`: strict majority over seeds, UNKNOWN/ties/not-offered/duplicate/missing-cost counted) is stored in `capability_evaluations.metrics["serving_evidence"]`; verdicts, suites and every earlier config hash are unchanged when the flag is off, and the arm never enters `decide()`. `ee-ctl train --kind evidence --paired-from-registry CAPABILITY@VERSION` builds the prior from the stored evaluation and checks every **gate** (`controller/evidence_quality.py`; `EvidenceAssessment` lists one reason per failed gate): kind `PROMOTION_EVALUATION`, tenant, risk class, held-out partitions only, runtime/verifier/environment versions, capability version, sample size (`n_min_pairs`), UNKNOWN/tie fraction ≤ 20%, complete token measurements, no duplicate rows or evaluation counted twice, evaluation verdict PASS, not a test-double model, freshness (when `max_evidence_age_days` is set), drift state not DRIFTED/QUARANTINED/RECOVERING. Ineligible evidence refuses to train (exit 2, every reason printed) unless `--allow-research`, which records the source as `production_eligible=false`; `--allow-version-mismatch` stays, is listed in `overrides` and never weakens another gate. Result files (`--paired-from`) are research-only (`EXPERIMENT_FILE` / `STRESS_FIXTURE`). `ee-ctl evidence-inspect --version N` prints the assessment of a stored policy's priors; the offline gate reports `prior_sources_ineligible` and FAILs when the policy requires eligibility (`evidence.require_production_eligible`, set automatically for registry priors).
+
+**B. Windowed drift monitor** (`controller/drift.py`, pure; `domain/drift.py`). Per prior-backed cell (family, risk, default, alternative) it folds the executed, verified outcomes of the context (shadow decisions, UNKNOWN [counted separately] and other tenants are never observations) through `NORMAL → SUSPECT → DRIFTED → QUARANTINED → RECOVERING → NORMAL`:
+
+| channel | alarm / suspect rule (windows of `window`=40 alternative outcomes, ≥ `min_samples`=20) |
+|---|---|
+| success | Newcombe upper bound of (recent − reference) < −`success_tolerance` at `confidence` (0.995) / < 0 at `suspect_confidence` (0.90); optional Bernoulli CUSUM (`detector: CUSUM`) |
+| cost | lower bound of mean-token rise > `cost_tolerance` × reference (delta-method, reference uncertainty included) |
+| utility | tokens per verified success: rise over the reference beyond `utility_tolerance`, **or** dearer than the rule default (the saving that justified the switch is gone) |
+| context mismatch | ≥ `mismatch_min` observations under another runtime/verifier version (structural: no sample size needed) |
+| staleness | evidence older than `max_evidence_age_days` |
+
+An alarm must persist `persistence` (10) consecutive looks to move SUSPECT → DRIFTED; DRIFTED is recorded and followed immediately by QUARANTINED. A quarantined cell cannot control a decision, **including through the unpaired live rule** (live data contain pre-drift outcomes); after `min_quarantine` rule-served decisions it enters RECOVERING, where bounded probes (`probe_rate` exploration mass, `probe_budget` per episode, only on the existing exploration allow-list, exact logged propensities) collect fresh outcomes. Trust returns only through `RECOVERY_CRITERIA_MET`: ≥ `min_recovery_samples` fresh outcomes whose *lower* bound clears a stricter threshold (`recovery_threshold` 0.05 < `success_tolerance` 0.10, `recovery_confidence`), acceptable cost and utility, compatible context, for `recovery_persistence` consecutive looks. A still-degraded probe window or an exhausted budget returns to QUARANTINED; after `max_episodes` the cell stays quarantined until a new version. The historical prior is never edited.
+
+* **Modes.** `SHADOW`: the monitor runs on real verified outcomes and persists transitions with `applied=false`; the decision is bit-identical to M6.1 (it keeps its coarse guard). `ENFORCE`: the overlay (loaded when the controller is built: `build_rollout(..., drift=DriftService)`; execution never reads live tables per decision) restricts decisions and replaces the coarse guard. The mode is part of the immutable definition, so enforcement ships as a new version through offline → shadow → canary → active; the monitor can only *restrict* a policy toward the rule baseline, never promote or switch, and protected classes/foreign tenants never read it.
+* **Persistence.** `controller_drift_transitions` (migration 0007, append-only trigger): cell, previous/new state, trigger, effect, mode, `applied`, measurements, window size, full threshold configuration and its hash, detector version, causing decision id, observation time, policy version. `DriftService.sync` replays the monitor over the acted decisions of a version, **refuses** to append unless the persisted transitions are exactly a prefix of the recomputation, and publishes the overlay.
+* **Replay.** `DecisionFeatures.drift` carries what a decision read; `ee-ctl replay` recomputes it and detects a removed or altered overlay.
+
+```
+uv run ee-eval evaluate --tenant T --capability C --version 1 --serving-evidence ...                    # records final-outcome evidence
+uv run ee-ctl train --kind evidence --paired-from-registry C@1 --drift-monitor shadow --explore-families pool timeout
+uv run ee-ctl evidence-inspect --version N                                                              # EvidenceAssessment of every prior
+uv run ee-ctl drift-evaluate | drift-status | drift-replay | drift-shadow-report --version N            # monitor, audit, hindsight check
+uv run ee-ctl drift-calibrate / drift-sim / drift-real / drift-report ...                               # frozen experiments (synthetic overlays)
+```
+
 ## Commands
 
 ```
@@ -84,14 +114,14 @@ uv run ee-ctl live       --portfolio heterogeneous --root PUB --private-root PRI
 ```
 `paired-run` and `live` use hand-authored **stress fixtures** (`controller_fixtures.py`; a compiler-shaped capability and a *drifted* one whose target key is frozen to its original layout). They are validated through the normal DSL validator, held in memory, never registered or promoted, and every run is tagged experimental.
 
-## Schema (migrations 0005, 0006)
+## Schema (migrations 0005, 0006, 0007)
 
-`controller_policies` (immutable definition + hash; only `state` changes, along the legal graph, with a trigger requiring stage evidence), `controller_policy_evaluations` and `controller_policy_transitions` (append-only), partial unique indexes for one ACTIVE/CANARY/SHADOW version per policy, and `policy_decisions.acted boolean NOT NULL DEFAULT true`. Migration 0006 only widens the `kind` CHECK to include `EVIDENCE_DRIVEN` (paired priors live inside the JSON definition). See [schema.md](./schema.md).
+`controller_policies` (immutable definition + hash; only `state` changes, along the legal graph, with a trigger requiring stage evidence), `controller_policy_evaluations` and `controller_policy_transitions` (append-only), partial unique indexes for one ACTIVE/CANARY/SHADOW version per policy, and `policy_decisions.acted boolean NOT NULL DEFAULT true`. Migration 0006 only widens the `kind` CHECK to include `EVIDENCE_DRIVEN` (paired priors live inside the JSON definition); migration 0007 adds the append-only `controller_drift_transitions` audit table (the downgrade refuses while it holds rows). See [schema.md](./schema.md).
 
 ## Limits
 
 * The estimator is tabular over `(family, risk, action)`; it cannot see within-family variant differences (a capability that is good on some layouts and bad on others averages out).
 * Non-inferiority at a 10-point margin needs on the order of 100+ verified trials per action; the learned controller is therefore conservative at benchmark scale and defers to the rule baseline until it has them.
 * Exploration costs successes and tokens; whether it pays back depends on the horizon (see the report). M6.1 removes most of it where a paired prior exists, but a prior needs several hundred paired validation tasks per cell to resolve a 10-point margin (smaller priors leave the rule in place) and is extra validation cost until promotion records the final-outcome arm.
-* The drift guard is slow after a sudden collapse of a prior-backed alternative; shadow/canary gating and rollback remain the protection.
+* The M6.1 coarse drift guard is slow after a sudden collapse; M6.2's windowed monitor replaces it in `ENFORCE` mode (see the report for what it does and does not achieve: detection delay, slow recovery, structural-invalidation cost).
 * `HUMAN_ESCALATION` is never selected by a learned policy; no cost model for humans exists.

@@ -167,6 +167,10 @@ def _from_json(d: dict[str, Any]) -> StreamResult:
     return StreamResult(**d, families=fams)
 
 
+def _avg(xs: Sequence[float]) -> float:
+    return sum(xs) / len(xs) if xs else 0.0
+
+
 def _fmt_q(q: tuple[float, float, float] | None) -> str:
     return "n/a" if q is None else f"{q[1]:g} [{q[0]:g}, {q[2]:g}]"
 
@@ -259,16 +263,21 @@ def render_sim(by: dict[str, dict[str, list[StreamResult]]], title: str, preambl
             shadow = variants.get("m62_shadow", [])
             same = sum(
                 1
-                for p, q in zip(shadow, b, strict=True)
+                for p, q in zip(shadow, b, strict=False)
                 if (p.successes, p.tokens) == (q.successes, q.tokens)
+            )
+            shadow_note = (
+                f"SHADOW equals M6.1 (same successes and tokens) in {same}/{len(shadow)} streams. "
+                if shadow
+                else ""
             )
             out += [
                 "",
-                f"SHADOW equals M6.1 (same successes and tokens) in {same}/{len(shadow)} streams. "
-                f"M6.2 ENFORCE per stream: {sum(r.n_fallback for r in a) / len(a):.0f} fallback "
-                f"decisions, {sum(r.n_probe for r in a) / len(a):.1f} recovery probes "
-                f"({sum(r.probe_tokens for r in a) / len(a):,.0f} probe tokens), "
-                f"{sum(r.transitions for r in a) / len(a):.1f} transitions.",
+                f"{shadow_note}M6.2 ENFORCE per stream: "
+                f"{_avg([r.n_fallback for r in a]):.0f} fallback decisions, "
+                f"{_avg([r.n_probe for r in a]):.1f} recovery probes "
+                f"({_avg([r.probe_tokens for r in a]):,.0f} probe tokens), "
+                f"{_avg([r.transitions for r in a]):.1f} transitions.",
                 "",
             ]
     return "\n".join(out) + "\n"

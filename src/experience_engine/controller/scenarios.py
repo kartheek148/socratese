@@ -229,6 +229,7 @@ class Stream:
     prior_draws: int
     perturbation: Perturbation
     material: dict[str, list[bool]] = field(default_factory=dict)
+    verifier_label: str = SIM_VERIFIER
 
 
 def build_stream(scenario: Scenario, seed: int) -> Stream:

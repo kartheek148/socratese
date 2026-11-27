@@ -89,6 +89,9 @@ class SimConfig:
     drift: SimDrift | None = None
     # M6.2: synthetic perturbation of the alternative's observed outcomes (labelled experiments)
     perturb: Perturbation | None = None
+    verifier_label: str = (
+        SIM_VERIFIER  # version stamped on observations (real tables: the source's)
+    )
 
 
 @dataclass(frozen=True)
@@ -236,8 +239,8 @@ def run_stream(
             and _unit(label, i) >= drift.survival
         ):
             status = OutcomeStatus.FAILURE
-        runtime = "rt-1"
         pt = cfg.perturb
+        runtime = pt.base_runtime if pt is not None else "rt-1"
         if pt is not None and choice.selected_key == pt.action:
             ok, tokens, runtime = pt.apply(
                 i, t.family, status == OutcomeStatus.VERIFIED_SUCCESS, tokens
@@ -260,7 +263,7 @@ def run_stream(
                 propensities=choice.propensities,
                 observed_at=SIM_EPOCH + timedelta(hours=i),
                 runtime_version=runtime,
-                verifier_version=SIM_VERIFIER,
+                verifier_version=cfg.verifier_label,
             )
         )
         steps.append(
