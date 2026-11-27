@@ -83,7 +83,9 @@ class DriftService:
         if dp is None:
             return SyncResult(None)
         records = self._outcomes(definition.tenant_id, [definition.policy_version])
-        fleet = MonitorFleet(references_from_snapshot(definition.snapshot), dp)
+        fleet = MonitorFleet(
+            references_from_snapshot(definition.snapshot), dp, definition.tenant_id
+        )
         fleet.ingest(records)
         persisted = self._log.transitions(
             definition.tenant_id, definition.policy_id, definition.version

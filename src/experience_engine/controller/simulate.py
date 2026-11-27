@@ -207,7 +207,7 @@ def run_stream(
             snap_hash = snap.snapshot_hash()
             if dp is not None:
                 if fleet is None:
-                    fleet = MonitorFleet(references_from_snapshot(snap), dp)
+                    fleet = MonitorFleet(references_from_snapshot(snap), dp, cfg.tenant_id)
                 fleet.ingest(records[ingested:])
                 ingested = len(records)
                 overlay = fleet.overlay()

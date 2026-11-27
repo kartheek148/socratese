@@ -179,3 +179,53 @@ def test_0006_allows_the_evidence_driven_kind_and_never_rewrites_history(
     with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
         _insert_policy(conn, "EVIDENCE_DRIVEN", 4)
     engine.dispose()
+
+
+def test_0007_adds_the_append_only_drift_transition_table_and_never_rewrites_history(
+    scratch_database: str,
+) -> None:
+    migrate(scratch_database, "0006")
+    engine = sa.create_engine(scratch_database)
+    assert "controller_drift_transitions" not in _tables(engine)
+    with engine.begin() as conn:
+        _insert_policy(conn, "EVIDENCE_DRIVEN", 1)
+    migrate(scratch_database)
+    assert "controller_drift_transitions" in _tables(engine)
+    assert "controller_drift_transitions_append_only" in _triggers(engine)
+    row = (
+        "INSERT INTO controller_drift_transitions (transition_id, tenant_id, policy_id, version, "
+        "cell_key, seq, from_state, to_state, trigger, effect, mode, applied, measurements, "
+        "n_window, config, config_hash, detector_version, decision_id, created_at) VALUES "
+        "(gen_random_uuid(), 't', 'p', :v, 'c', :seq, :f, :to, 'SUCCESS_DEGRADATION', 'MONITOR', "
+        "'SHADOW', false, '{}', 20, '{}', 'h', 'drift-monitor/1', 'd-1', now())"
+    )
+    with engine.begin() as conn:
+        conn.execute(sa.text(row), {"v": 1, "seq": 1, "f": "NORMAL", "to": "SUSPECT"})
+    with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:  # unique (cell, seq)
+        conn.execute(sa.text(row), {"v": 1, "seq": 1, "f": "NORMAL", "to": "SUSPECT"})
+    with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:  # state CHECK
+        conn.execute(sa.text(row), {"v": 1, "seq": 2, "f": "NORMAL", "to": "BOGUS"})
+    with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:  # policy FK
+        conn.execute(sa.text(row), {"v": 9, "seq": 1, "f": "NORMAL", "to": "SUSPECT"})
+    with pytest.raises(sa.exc.DBAPIError), engine.begin() as conn:  # append-only
+        conn.execute(sa.text("UPDATE controller_drift_transitions SET effect = 'X'"))
+    with pytest.raises(sa.exc.DBAPIError, match="not rewriting history"):
+        downgrade(scratch_database, "0006")
+    with engine.connect() as conn:  # nothing was lost by the refused downgrade
+        assert (
+            conn.execute(sa.text("SELECT count(*) FROM controller_drift_transitions")).scalar_one()
+            == 1
+        )
+        assert conn.execute(sa.text("SELECT count(*) FROM controller_policies")).scalar_one() == 1
+    engine.dispose()
+
+
+def test_0007_downgrades_cleanly_when_no_audit_rows_exist(scratch_database: str) -> None:
+    migrate(scratch_database)
+    engine = sa.create_engine(scratch_database)
+    downgrade(scratch_database, "0006")
+    assert "controller_drift_transitions" not in _tables(engine)
+    assert "controller_policies" in _tables(engine)  # 0006 and earlier are intact
+    migrate(scratch_database)  # and it can be re-applied
+    assert "controller_drift_transitions" in _tables(engine)
+    engine.dispose()

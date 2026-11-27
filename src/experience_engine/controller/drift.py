@@ -494,8 +494,11 @@ def observation_of(r: DecisionOutcomeRecord) -> Observation:
 class MonitorFleet:
     """All monitored cells of one policy. Ingests executed decisions in order; incremental."""
 
-    def __init__(self, refs: Sequence[CellReference], params: DriftParams):
+    def __init__(
+        self, refs: Sequence[CellReference], params: DriftParams, tenant_id: str | None = None
+    ):
         self.params = params
+        self._tenant = tenant_id  # records of another tenant are never observations
         self.refs = {r.cell_key: r for r in refs}
         self._by_ctx: dict[tuple[str | None, str, str], list[CellReference]] = defaultdict(list)
         for r in refs:
@@ -508,6 +511,8 @@ class MonitorFleet:
         for rec in records:
             if not rec.acted:
                 continue  # shadow decisions are never observations
+            if self._tenant is not None and rec.tenant_id != self._tenant:
+                continue
             cells = self._by_ctx.get((rec.family, rec.risk_level, rec.default_key))
             if not cells:
                 continue
@@ -532,7 +537,7 @@ class MonitorFleet:
 def replay_fleet(
     snapshot: EstimatorSnapshot, params: DriftParams, records: Iterable[DecisionOutcomeRecord]
 ) -> MonitorFleet:
-    fleet = MonitorFleet(references_from_snapshot(snapshot), params)
+    fleet = MonitorFleet(references_from_snapshot(snapshot), params, snapshot.tenant_id)
     fleet.ingest(records)
     return fleet
 
