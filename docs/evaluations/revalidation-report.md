@@ -159,7 +159,20 @@ uv run ee-ctl reval-sim --seed-start 9000000 --seeds 100 --workers 8 --json-out 
 uv run ee-ctl reval-report --results heldout.json --repro heldout2.json --out report.md
 ```
 
-{{TESTS}}
+Results (all run; nothing here is a claim without its command):
+
+| check | result |
+|---|---|
+| `uv run ruff check .` / `ruff format --check .` | all checks passed / 350 files formatted |
+| `uv run mypy src` | no issues in 182 source files |
+| full `pytest` (above, real Postgres and RabbitMQ) | **exit code 0; 860 tests collected and run** (M6.2's suite had 763: +97), no failure, error or skip in the progress lines. The repository sets `addopts = "-q"`, so a further `-q` suppresses pytest's summary line; the evidence is the exit status, the collection count and the progress lines. The slowest tests are the M6.1 simulations (355 s, 218 s, 136 s on a shared machine); M6.3 changed none of them. |
+| backward compatibility | the 185-test M6/M6.1/M6.2 compatibility set (pinned golden hashes and decision digests, controller, drift, evidence, rollout) passes unchanged after every M6.3 change; `default-low`, `default-low-v2`, `serving-low-v1` and every stored M6/M6.1/M6.2 hash are untouched |
+| migration 0008 | `alembic upgrade` → `alembic check` (no drift between migration and table metadata) → `downgrade` → `upgrade`; migration tests: tables, append-only triggers, unique/CHECK/FK constraints, refused downgrade with rows, clean downgrade when empty |
+| mutation checks of the revalidation core | 35 single-line mutants (gates, lineage, exact tests, SPRT, cost guard, confirmation, budgets, TTL, rebasing, tenant filters, projection, verdict mapping): 28 killed at first, 6 survived (timeouts counted as successes, the exact critical-value boundary, the *final* cost guard, rebasing not reaching the monitor, the fleet's tenant filter on dwell, "any goal" vs "every goal"), 1 pattern needed reformatting; after 7 targeted tests **35/35 killed** |
+| architecture | the layering test caught my first placement of the real-executor adapter (`execution/` must not import `controller/`); it now lives in `controller/revalidation_runtime.py` |
+| reproducibility (g) | two complete held-out runs (6,000 stream results each) are **byte-identical** (sha256 `0470ba12…`); a one-seed CLI round trip is also tested byte for byte |
+
+The pre-registered invariants (design §2.4) and where they are tested: I1/I3 prior-disabled in every state but `RECOVERED` (`test_a_cell_stays_prior_disabled_in_every_case_state_but_recovered`); I2 unverified is never a success (`test_unavailable_trials_are_never_successes_and_can_never_recover`, `test_only_an_explicitly_verified_pass_is_a_success`, `test_timeouts_and_invalid_outputs_are_counted_failures_never_successes`); I4 evidence newer than the trigger (`test_trials_that_break_lineage_are_rejected_recorded_and_not_counted`); I5 explainable restoration (`test_fixed_recovery_goes_through_every_state_and_is_explainable`); I6 bounded (trial cap, token cap, lifetime budget, TTLs); I7 no recovery from time alone (`test_no_recovery_from_time_alone`, random arbitrary gaps and an executor that never answers); I8 tenant isolation (fleet, trials, executor pool, tables); I9 reproducible from persisted evidence and policy version (`test_replay_from_persisted_evidence_reproduces_every_transition` for all three strategies; the real-PostgreSQL restoration test; a changed configuration is detected). Also tested: revalidation changes no decision until a cell is quarantined; SHADOW never executes and is bit-identical to M6.1 under drift; the verdict rule on synthetic results that force each branch.
 
 ## 15. Limitations and negative / inconclusive results
 
