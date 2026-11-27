@@ -182,6 +182,43 @@ def report(loop: str, monitor: str, cusum: str | None, extra: dict[str, str]) ->
         "",
     ]
 
+    # ---- sensitivity of the verdict to the run used for (a)-(c) ----------------------------------
+    out += [
+        "## Sensitivity: criteria (a)-(c) under the controller-in-the-loop runs",
+        "",
+        "The frozen text did not say which run measures (a)-(d). The monitor-only run was chosen "
+        "at evaluation time, *after* the in-loop results had been seen, because an in-loop "
+        "SHADOW controller keeps M6.1's coarse guard, which can pull the controller off the "
+        "alternative before the monitor confirms (the monitor then stops observing it and the "
+        "stream counts as 'missed'). The same criteria evaluated on the in-loop runs (100 "
+        "streams) are shown so the dependence is visible:",
+        "",
+        "| run | (a) S1 / S6 false-alarm streams | (b) S2 median delay, missed | (b) S3 missed "
+        "| (b) S4 missed | (c) S7 `pool` false alarms / `timeout` missed | (a) | (b) | (c) |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for label, runs in (
+        ("monitor-only (used)", {k: M[k]["monitor"] for k in ("S1", "S6", "S2", "S3", "S4", "S7")}),
+        ("in-loop SHADOW", {k: L[k]["m62_shadow"] for k in ("S1", "S6", "S2", "S3", "S4", "S7")}),
+        ("in-loop ENFORCE", {k: L[k]["m62"] for k in ("S1", "S6", "S2", "S3", "S4", "S7")}),
+    ):
+        f1, f6 = _fa_streams(runs["S1"]), _fa_streams(runs["S6"])
+        n2_, d2_, m2_, q2_ = _detect(runs["S2"])
+        n3_, d3_, m3_, _ = _detect(runs["S3"])
+        n4_, d4_, m4_, _ = _detect(runs["S4"])
+        fp7 = _fa_streams(runs["S7"], "pool")
+        nt_, dt_, mt_, _ = _detect(runs["S7"], "timeout")
+        oka = f1 / len(runs["S1"]) <= 0.05 and f6 / len(runs["S6"]) <= 0.05
+        okb = (q2_ is not None and q2_[1] <= 100 and m2_ / n2_ <= 0.05 and m3_ / n3_ <= 0.15
+               and m4_ / n4_ <= 0.10)  # fmt: skip
+        okc = fp7 / len(runs["S7"]) <= 0.05 and mt_ / nt_ <= 0.05
+        out.append(
+            f"| {label} | {f1}/{len(runs['S1'])} / {f6}/{len(runs['S6'])} | "
+            f"{q2_[1] if q2_ else 'n/a'}, {m2_}/{n2_} | {m3_}/{n3_} | {m4_}/{n4_} | "
+            f"{fp7}/{len(runs['S7'])} / {mt_}/{nt_} | {_mark(oka)} | {_mark(okb)} | {_mark(okc)} |"
+        )
+    out += [""]
+
     # ---- non-selected detector, if provided -----------------------------------------------------
     if cusum:
         C = _load(cusum)

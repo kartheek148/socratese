@@ -33,6 +33,16 @@ Decision text as frozen: *SUPPORTED iff (a)-(e) hold; PARTIALLY SUPPORTED if (a)
 
 **Hypothesis verdict: PARTIALLY SUPPORTED** (criteria met: a, b, c, d, e; not met: f).
 
+### Sensitivity: criteria (a)-(c) under the controller-in-the-loop runs
+
+The frozen text did not say which run measures (a)-(d). The monitor-only run was chosen at evaluation time, *after* the in-loop results had been seen, because an in-loop SHADOW controller keeps M6.1's coarse guard, which can pull the controller off the alternative before the monitor confirms (the monitor then stops observing it and the stream counts as 'missed'). The same criteria evaluated on the in-loop runs (100 streams) are shown so the dependence is visible:
+
+| run | (a) S1 / S6 false-alarm streams | (b) S2 median delay, missed | (b) S3 missed | (b) S4 missed | (c) S7 `pool` false alarms / `timeout` missed | (a) | (b) | (c) |
+|---|---|---|---|---|---|---|---|---|
+| monitor-only (used) | 0/300 / 7/300 | 47.0, 0/300 | 8/300 | 10/300 | 0/300 / 2/300 | **met** | **met** | **met** |
+| in-loop SHADOW | 0/100 / 1/100 | 47.0, 6/100 | 11/100 | 3/100 | 0/100 / 10/100 | **met** | **NOT met** | **NOT met** |
+| in-loop ENFORCE | 0/100 / 3/100 | 47.0, 0/100 | 3/100 | 1/100 | 0/100 / 0/100 | **met** | **met** | **met** |
+
 ### Non-selected comparison: CUSUM (h=10) versus the frozen WINDOW detector
 
 Monitor-only, same held-out streams. CUSUM had no feasible calibration point, so it is reported for comparison only.
