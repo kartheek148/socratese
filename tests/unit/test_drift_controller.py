@@ -144,7 +144,14 @@ def test_recovering_probes_are_bounded_logged_and_allow_listed() -> None:
 
 def test_protected_classes_and_foreign_tenants_never_read_the_overlay() -> None:
     d = defn("ENFORCE")
-    ov = overlay(DriftState.RECOVERING, probes=50)
+    ov = DriftOverlay(  # an entry for every risk class: protected ones must still read nothing
+        cells={
+            paired_key("pool", risk, CAP_KEY, PLANNING_KEY): DriftCellStatus(
+                state=DriftState.RECOVERING, seq=3, probes_remaining=50
+            )
+            for risk in ("low", "medium", "high")
+        }
+    )
     for risk in ("high", "medium"):
         key, dec = decide(d, ov, risk=risk)
         f = DecisionFeatures.model_validate(dec.feature_snapshot[CONTROLLER_KEY])

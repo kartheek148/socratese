@@ -470,3 +470,72 @@ def test_shadow_and_enforce_differ_only_in_the_recorded_mode() -> None:
     assert [t.signature() for t in a] == [t.signature() for t in b]
     assert not any(t.applied for t in a) and all(t.applied for t in b)
     assert {DriftState.DRIFTED, DriftState.QUARANTINED, DriftState.RECOVERING} == PRIOR_DISABLED
+
+
+# ---- mutation-driven additions: each pins one rule of the frozen configuration ------------------
+def _first(trs, to: DriftState):  # type: ignore[no-untyped-def]
+    return next((t for t in trs if t.to_state == to), None)
+
+
+def test_persistence_delays_the_confirmed_drift_by_exactly_the_extra_looks() -> None:
+    r = ref()
+    seq = stream(60, 0.5, 1) + [obs(60 + i, False) for i in range(80)]  # a clean, lasting collapse
+    quick = P.model_copy(update={"persistence": 1})
+    _, t1 = replay(r, quick, seq)
+    _, t10 = replay(r, P, seq)
+    d1, d10 = _first(t1, DriftState.DRIFTED), _first(t10, DriftState.DRIFTED)
+    assert d1 is not None and d10 is not None
+    assert int(d10.decision_id[2:]) - int(d1.decision_id[2:]) == P.persistence - 1
+
+
+def test_recovery_needs_the_stricter_bound_not_merely_the_entry_tolerance() -> None:
+    r = ref()
+    band = []
+    for k in range(41):
+        ok, meas = recovery_ok(r, P, [(1, 6000, True)] * k + [(0, 6000, True)] * (40 - k), T0)
+        if -P.success_tolerance <= meas["fresh_success_lb"] < -P.recovery_threshold:
+            assert not ok  # inside the hysteresis band: not yet trusted
+            band.append(k)
+    assert band, "the window sizes must exercise the band between the two thresholds"
+
+
+def test_recovery_uses_its_own_confidence_level() -> None:
+    r = ref()
+    k = 19  # 47.5% against a 50% reference: the point estimate is fine, the 80% bound is not
+    win = [(1, 6000, True)] * k + [(0, 6000, True)] * (40 - k)
+    ok, meas = recovery_ok(r, P, win, T0)
+    assert not ok and meas["fresh_success_lb"] < -P.recovery_threshold
+    strong = [(1, 6000, True)] * 30 + [(0, 6000, True)] * 10
+    assert recovery_ok(r, P, strong, T0)[0]
+
+
+def test_recovery_requires_acceptable_fresh_cost() -> None:
+    r = ref()
+    cheap = [(1, 6000, True)] * 40
+    dear = [(1, 6000 * 1.4, True)] * 40  # +40%: above half the cost tolerance (15%)
+    slightly = [(1, 6000 * 1.1, True)] * 40
+    assert recovery_ok(r, P, cheap, T0)[0] and recovery_ok(r, P, slightly, T0)[0]
+    assert not recovery_ok(r, P, dear, T0)[0]
+
+
+def test_recovery_persistence_delays_the_return_to_normal_by_exactly_the_extra_looks() -> None:
+    r = ref()
+    st, i = _drive_to_quarantine(r)
+    for k in range(P.min_quarantine):
+        st, _ = advance(r, P, st, obs(i + k, True, 9000, action=DEF))
+    assert st.state == DriftState.RECOVERING
+    probes = [obs(i + 100 + k, True) for k in range(80)]  # healthy, continuously passing
+    fast = P.model_copy(update={"recovery_persistence": 1})
+    _, tf = replay_from(r, fast, st, probes)
+    _, ts = replay_from(r, P, st, probes)
+    nf, ns = _first(tf, DriftState.NORMAL), _first(ts, DriftState.NORMAL)
+    assert nf is not None and ns is not None
+    assert int(ns.decision_id[2:]) - int(nf.decision_id[2:]) == P.recovery_persistence - 1
+
+
+def replay_from(r, params, st, observations):  # type: ignore[no-untyped-def]
+    out = []
+    for o in observations:
+        st, t = advance(r, params, st, o)
+        out += t
+    return st, out
