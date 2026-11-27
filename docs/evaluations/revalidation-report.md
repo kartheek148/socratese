@@ -37,7 +37,25 @@ Variants on identical streams with common random numbers: `m61` (coarse guard), 
 
 ## 5. Acceptance and verdict
 
-{{ACCEPTANCE}}
+| criterion | m63_A | m63_B | m63_C |
+|---|---|---|---|
+| (a) false restoration in S2/S4/R1/R2: exact 95% UB ≤ 5% (R1 ≤ 10%) | 1/400, UB 1.2% (R1 4.7%) **met** | 1/400, UB 1.2% (R1 4.7%) **met** | 0/400, UB 0.7% (R1 3.0%) **met** |
+| (b) restored by the end, S5/R3/R4 ≥ 70% | S5: 79/100, R3: 82/100, R4: 59/100 **NOT met** | S5: 79/100, R3: 82/100, R4: 59/100 **NOT met** | S5: 84/100, R3: 83/100, R4: 55/100 **NOT met** |
+| (c) restored by the end, S8/S8b ≥ 90% | S8: 89/100, S8b: 89/100 **NOT met** | S8: 89/100, S8b: 89/100 **NOT met** | S8: 90/100, S8b: 90/100 **met** |
+| (d) restorations resting on > 20% unverified trials (must be 0) | 0 **met** | 0 **met** | 0 **met** |
+| (e) net utility vs m62, pooled S5/R3/R4/S8/S8b, CI lower bound > 0 | -59.4 [-63.1, -55.8] **NOT met** | -58.3 [-61.8, -54.8] **NOT met** | -29.7 [-33.6, -25.8] **NOT met** |
+|     … against m62_locked (permanent quarantine), reported | -50.8 [-54.5, -47.3] | -49.7 [-53.2, -46.4] | -21.1 [-25.1, -17.1] |
+
+(f) sequential saving, C / A revalidation tokens over all scenarios: 0.45 [0.43, 0.47] (needs ≤ 0.80, upper bound < 1.0, and (a) for C): **met**
+
+(g) reproducibility: **met** — see below
+(h) backward compatibility: pinned by the test suite (M6/M6.1/M6.2 hashes and digests).
+
+Second run `heldout2.json` byte-identical: **yes**.
+
+**Verdict (rule applied in order): PARTIALLY SUPPORTED.** Candidate strategy (lowest revalidation tokens among those meeting (a)–(d)): none. S5 restorations: m62 51, best m63 84.
+
+The full per-scenario tables (restoration, false restoration, Δ successes and utility with CIs, revalidation tokens, trials, cycles, terminal states, delay) and the break-even table are in [revalidation-tables.md](./revalidation-tables.md); the stored per-stream results are `docs/evaluations/data/m63-heldout.json.gz`.
 
 ## 6. Safety
 
@@ -98,7 +116,20 @@ Given time, M6.2's slow native recovery restores almost every temporary disturba
 
 ## 12. Exploratory sensitivity (development seeds only; none changes the frozen configuration)
 
-{{EXPLORATORY}}
+Development seeds 110000–110029 (30 streams per cell; the held-out seeds were never used), scenarios S5 (temporary disturbance), S8 (structural, harmless) and S2 (persistent collapse), strategy C unless noted; Δ utility is C minus M6.2 native recovery on the same streams [95 % CI]. These runs *explore* the design space for the next milestone; they are not evidence for the frozen configuration and cannot change it.
+
+| setting (one change at a time) | S5: restored, C − native, tokens, delay | S8: restored, C − native, tokens | S2: tokens (0/30 restored) |
+|---|---|---|---|
+| frozen configuration | 24/30, −38.1 [−54.7, −22.1], 1.20M, 80 | 25/30, −11.8 [−33.8, +8.5], 1.15M | 269k |
+| `trials_per_round` 10 (the pre-E2 throughput) | 21/30, −50.1 [−65.4, −34.3], 1.17M, **190** | 25/30, −23.8 [−44.0, −4.1], 1.13M | 269k |
+| `confirm_trials` 0 (no confirmation) | 24/30, −30.4 [−48.1, −13.3], 1.10M, 60 | 25/30, −4.3 [−27.4, +17.3], 1.04M | 269k |
+| `alpha` 0.10 (looser error rate) | 26/30, −16.3 [−29.8, −2.8], 0.84M, 65 | 27/30, +4.5 [−13.8, +20.7], 0.91M | 258k |
+| `margin` 0.15 (wider tolerance) | 28/30, **−3.5 [−14.7, +6.9]**, 0.70M, 60 | **30/30, +27.7 [+18.5, +36.7]**, 0.60M | 203k |
+
+* **Throughput** (E2) changes speed (median delay 190 vs 80 decisions) and, less, restoration; it does not change cost. Time-to-restoration claims depend on it.
+* **Confirmation** costs ≈ 9 % of the tokens and ≈ 20 decisions of delay. None of these three scenarios has a regime flip between the evidence and the restoration, so its *benefit* could not be observed: its value is **undetermined**, not shown.
+* **Looser α** and especially a **wider margin** cut cost by 30–50 % and raise restoration, bringing C level with native recovery on S5 and clearly above it on S8. This is a safety/cost trade, not a free improvement: a 0.15 margin accepts degradations of up to 15 points, and R1 (a 15.6-point residual drop) sits exactly on that boundary — **R1 was not part of this subset**, so the false-restoration cost of the wider margin is unmeasured. It cannot be adopted on this evidence; whether a wider margin is acceptable per risk class and reason is the first question for a pre-registered M6.4 study.
+* Strategy A under the same changes stays 30–50 utility units behind C (e.g. margin 0.15: S5 −31.5 vs native, S8 +18.2 [+8.4, +27.1]).
 
 ## 13. Real-model case (exploratory)
 
