@@ -51,3 +51,35 @@ def newcombe_difference_bounds(
     lower = d - math.sqrt((p1 - l1) ** 2 + (u2 - p2) ** 2)
     upper = d + math.sqrt((u1 - p1) ** 2 + (p2 - l2) ** 2)
     return (max(-1.0, lower), min(1.0, upper))
+
+
+def newcombe_paired_bounds(
+    both: int, only1: int, only2: int, neither: int, confidence: float
+) -> tuple[float, float]:
+    """Newcombe (1998) hybrid-score bounds of p1 - p2 for PAIRED binary outcomes, one-sided each.
+
+    `only1` = tasks where outcome 1 succeeded and outcome 2 failed, `only2` the reverse. Unlike
+    `newcombe_difference_bounds` this uses the within-task correlation (phi, shrunk toward 0 by
+    the continuity correction n/2), so concordant tasks do not inflate the interval. Returns
+    (lower, upper); with no pairs it is the vacuous (-1, 1).
+    """
+    n = both + only1 + only2 + neither
+    if n <= 0:
+        return (-1.0, 1.0)
+    p1, p2 = (both + only1) / n, (both + only2) / n
+    l1, u1 = wilson_one_sided(both + only1, n, confidence)
+    l2, u2 = wilson_one_sided(both + only2, n, confidence)
+    margins = (both + only1) * (only2 + neither) * (both + only2) * (only1 + neither)
+    phi = 0.0
+    if margins > 0:
+        cross = both * neither - only1 * only2
+        shrunk = max(0.0, cross - n / 2) if cross > 0 else min(0.0, cross + n / 2)
+        phi = shrunk / math.sqrt(margins)
+    d = p1 - p2
+    lower = d - math.sqrt(
+        max(0.0, (p1 - l1) ** 2 - 2 * phi * (p1 - l1) * (u2 - p2) + (u2 - p2) ** 2)
+    )
+    upper = d + math.sqrt(
+        max(0.0, (u1 - p1) ** 2 - 2 * phi * (u1 - p1) * (p2 - l2) + (p2 - l2) ** 2)
+    )
+    return (max(-1.0, lower), min(1.0, upper))
