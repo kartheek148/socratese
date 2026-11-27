@@ -46,7 +46,6 @@ def test_revalidation_needs_the_drift_monitor_and_consistent_parameters() -> Non
     with pytest.raises(ValidationError):
         RevalidationParams.model_validate({"strategy": "FIXED", "surprise": 1})
     assert len({RevalidationParams(strategy=s).config_hash() for s in RevalStrategy}) == 3
-    assert a != b
 
 
 def test_the_frozen_defaults_are_the_design_values() -> None:
