@@ -114,3 +114,68 @@ def test_policy_reaches_active_only_through_evidence_and_can_be_rolled_back(
     assert "active=None" in out and "rule-capability/1: n=120" in out  # rule baseline serves again
     code, out = cli("status")
     assert code == 0 and "ROLLED_BACK" in out and "ACTIVE->ROLLED_BACK" in out
+
+
+def _paired_file(cli, tmp_path: Path, portfolio: str = "drifted") -> Path:  # type: ignore[no-untyped-def]
+    private = tmp_path / "private"
+    out = tmp_path / "paired.json"
+    code, text = cli(
+        "paired-run", "--root", str(ROOT), "--private-root", str(private),
+        "--portfolio", portfolio, "--llm", "fake", "--workers", "4",
+        "--families", "pool", "timeout", "--out", str(out),
+    )  # fmt: skip
+    assert code == 0, text
+    return out
+
+
+def test_paired_prior_flows_through_train_gates_shadow_and_replay(
+    cli,
+    engine: Engine,
+    tmp_path: Path,  # type: ignore[no-untyped-def]
+) -> None:
+    paired = _paired_file(cli, tmp_path)
+    cli.live()  # a rule-only decision log for the calibration / data gates
+    code, out = cli("train", "--kind", "evidence", "--paired-from", str(paired), "--n-min", "30")
+    assert code == 0 and "EVIDENCE_DRIVEN" in out and "paired prior:" in out, out
+    with engine.connect() as conn:
+        definition = conn.execute(sa.select(t.controller_policies.c.definition)).scalar_one()
+    assert definition["snapshot"]["paired"] and definition["snapshot"]["prior_sources"]
+    assert definition["params"]["evidence"]["n_min_pairs"] == 30
+
+    code, out = cli("evaluate", "offline", "--version", "1")
+    report = json.loads(out)
+    assert code == 0 and report["metrics"]["prior_cells"] >= 1, out
+    assert report["metrics"]["prior_validation_tokens"] > 0
+    if report["verdict"] != "PASS":
+        pytest.skip(f"fake model does not clear the offline gate: {report['reasons']}")
+    assert cli("promote", "--version", "1", "--to", "shadow")[0] == 0
+    out = cli.live()
+    assert "shadow=adaptive/1" in out
+    code, out = cli("replay", "--version", "1")
+    assert code == 0 and "NOT reproducible" not in out, out
+
+
+def test_paired_prior_refuses_other_runtime_unless_explicitly_allowed(
+    cli,
+    engine: Engine,
+    tmp_path: Path,  # type: ignore[no-untyped-def]
+) -> None:
+    paired = _paired_file(cli, tmp_path)
+    doc = json.loads(paired.read_text())
+    doc["config"]["runtime_version"] = "some-older-runtime"
+    paired.write_text(json.dumps(doc))
+    cli.live()
+    with pytest.raises(SystemExit, match="do not match this runtime"):
+        cli("train", "--kind", "evidence", "--paired-from", str(paired))
+    with engine.connect() as conn:  # nothing was registered
+        assert (
+            conn.execute(sa.select(sa.func.count()).select_from(t.controller_policies)).scalar_one()
+            == 0
+        )
+    code, out = cli(
+        "train", "--kind", "evidence", "--paired-from", str(paired), "--allow-version-mismatch"
+    )
+    assert code == 0 and "paired prior:" in out
+    with engine.connect() as conn:
+        definition = conn.execute(sa.select(t.controller_policies.c.definition)).scalar_one()
+    assert definition["snapshot"]["prior_sources"][0]["runtime_version"] == "some-older-runtime"

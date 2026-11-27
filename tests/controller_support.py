@@ -1,5 +1,6 @@
 """Builders shared by the M6 controller tests (pure, no I/O)."""
 
+import math
 import random
 from collections.abc import Sequence
 
@@ -313,3 +314,115 @@ def world(
         }
         out.append(TaskOutcome(f"{prefix}{i}", family, risk, acts, CAP_KEY, oc))  # type: ignore[arg-type]
     return out
+
+
+# ---- M6.1 helpers: paired cells, snapshots with priors, correlated paired worlds ---------------
+from statistics import NormalDist  # noqa: E402
+
+from experience_engine.controller.paired import PairedPrior, make_prior  # noqa: E402
+from experience_engine.domain.controller import PairedCell, PairedSource, paired_key  # noqa: E402
+
+DEFAULT_EVIDENCE: dict[str, object] = {}  # EvidenceParams defaults (frozen design values)
+
+
+def pcell(
+    both: int, default_only: int, alt_only: int, neither: int, dt: int = 8000, at: int = 5000
+) -> PairedCell:
+    """A paired 2x2 table; `dt` / `at` are mean tokens per run of the default / alternative."""
+    n = both + default_only + alt_only + neither
+    return PairedCell(
+        n=n,
+        both=both,
+        default_only=default_only,
+        alt_only=alt_only,
+        neither=neither,
+        default_tokens=dt * n,
+        alt_tokens=at * n,
+    )
+
+
+def source(n_pairs: int = 240, tokens: int = 1_000_000) -> PairedSource:
+    return PairedSource(
+        name="validation",
+        arms=["A", "E"],
+        splits=["HIDDEN_TRANSFER", "VALIDATION"],
+        dataset_hashes={"VALIDATION": "h" * 64},
+        model="m",
+        runtime_version="rt",
+        verifier_version="v",
+        n_pairs=n_pairs,
+        n_unknown_dropped=0,
+        n_tied_dropped=0,
+        tasks_sha256="t" * 64,
+        validation_tokens=tokens,
+        capabilities=[CAP],
+    )
+
+
+def evidence_definition(
+    cell: PairedCell | None,
+    *,
+    kind: ControllerKind = ControllerKind.COST_AWARE,
+    live: dict[str, tuple[int, int, int]] | None = None,
+    family: str = "pool",
+    risk: str = "low",
+    calibrated: bool = True,
+    version: int = 1,
+    evidence: dict[str, object] | None = None,
+    **params: object,
+) -> ControllerPolicyDefinition:
+    snap = snapshot_of(live or {}, family=family, calibrated=calibrated, risk="low")
+    if cell is not None:
+        snap = snap.model_copy(
+            update={
+                "paired": {paired_key(family, risk, CAP_KEY, PLANNING_KEY): cell},
+                "prior_sources": [source(cell.n)],
+            }
+        )
+    return ControllerPolicyDefinition(
+        policy_id="adaptive",
+        version=version,
+        kind=kind,
+        params=ControllerParams.model_validate({"evidence": evidence or {}, **params}),
+        snapshot=snap,
+    )
+
+
+def correlated_world(
+    n: int,
+    rates: dict[str, float],
+    cost: dict[str, int],
+    *,
+    rho: float = 0.5,
+    family: str = "pool",
+    seed: int = 0,
+    prefix: str = "c",
+    degrade_planning_at: int | None = None,
+    degraded_rate: float = 0.1,
+) -> list[TaskOutcome]:
+    """Full-information tasks whose two actions share a latent difficulty (correlation `rho`),
+    like a real paired validation set. Synthetic: labelled as such wherever it is used."""
+    rng = random.Random(seed)
+    nd = NormalDist()
+    acts = [
+        CandidateFeature(key=PLANNING_KEY, strategy=Strategy.GENERAL_PLANNING),
+        CandidateFeature(key=CAP_KEY, strategy=Strategy.DIRECT_CAPABILITY, ref=CAP),
+    ]
+    out = []
+    for i in range(n):
+        shared = rng.gauss(0, 1)
+        outcomes = {}
+        for k in (PLANNING_KEY, CAP_KEY):
+            p = rates[k]
+            if k == PLANNING_KEY and degrade_planning_at is not None and i >= degrade_planning_at:
+                p = degraded_rate
+            latent = math.sqrt(rho) * shared + math.sqrt(1 - rho) * rng.gauss(0, 1)
+            ok = latent < nd.inv_cdf(min(max(p, 1e-6), 1 - 1e-6))
+            tokens = max(1, int(rng.gauss(cost[k], cost[k] * 0.1)))
+            outcomes[k] = (OutcomeStatus.VERIFIED_SUCCESS if ok else OutcomeStatus.FAILURE, tokens)
+        out.append(TaskOutcome(f"{prefix}{i}", family, "low", acts, CAP_KEY, outcomes))  # type: ignore[arg-type]
+    return out
+
+
+def prior_of(tasks: list[TaskOutcome], n_min_pairs: int = 30) -> PairedPrior:
+    return make_prior(tasks, [source(len(tasks))], n_min_pairs)

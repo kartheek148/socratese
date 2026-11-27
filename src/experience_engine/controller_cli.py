@@ -1,10 +1,12 @@
 """ee-ctl: the adaptive controller's learning plane and rollout control (Milestone 6).
 
-  ee-ctl train      --tenant T --policy-id P --kind cost_aware|bandit [--last N] ...
+  ee-ctl train      --tenant T --policy-id P --kind cost_aware|bandit|evidence [--last N]
+                    [--paired-from RESULTS ...]                      (M6.1 paired validation prior)
   ee-ctl evaluate   offline|shadow|canary --tenant T --policy-id P --version V
   ee-ctl promote    --policy-id P --version V --to shadow|canary|active
   ee-ctl rollback | reject | status | replay
-  ee-ctl simulate   --heldout NAME RESULTS ... --out report.md      (offline, full-information)
+  ee-ctl simulate   --heldout NAME RESULTS ... [--prior RESULTS ...] --out report.md
+                                                                  (offline, full-information)
   ee-ctl paired-run --portfolio good|heterogeneous|drifted ...      (real model, arms A and E)
   ee-ctl live       --policy-id P --portfolio ...                   (registry-driven shadow/canary)
 
@@ -33,7 +35,12 @@ from experience_engine.adapters.db.run_lifecycle import SqlRunLifecycle
 from experience_engine.bench.dataset import BenchTask, DatasetLoader, EvaluatorAccess
 from experience_engine.bench.environment import ENVIRONMENT_VERSION, SimulatedEnvironment
 from experience_engine.bench.verifier import SimulationVerifier
-from experience_engine.controller.datasets import from_experiment, with_protected_share
+from experience_engine.controller.datasets import (
+    EnvReport,
+    from_experiment,
+    load_prior,
+    with_protected_share,
+)
 from experience_engine.controller.estimator import build_snapshot
 from experience_engine.controller.gates import (
     ShadowPair,
@@ -41,6 +48,7 @@ from experience_engine.controller.gates import (
     evaluate_offline,
     evaluate_shadow,
 )
+from experience_engine.controller.paired import PairedPrior, version_problems
 from experience_engine.controller.registry import ControllerPolicyRegistry, ControllerRegistryError
 from experience_engine.controller.replay import replay_decision
 from experience_engine.controller.report import SimEntry, SimSet, render_sim_report
@@ -85,17 +93,52 @@ def _registry(store: SqlControllerPolicyStore) -> ControllerPolicyRegistry:
     return ControllerPolicyRegistry(store, SystemClock())
 
 
-def _params(args: argparse.Namespace) -> ControllerParams:
+KIND_NAMES = {
+    "cost_aware": ControllerKind.COST_AWARE,
+    "bandit": ControllerKind.BANDIT,
+    "evidence": ControllerKind.EVIDENCE_DRIVEN,
+}
+
+
+def _params(
+    args: argparse.Namespace, kind: str | None = None, with_evidence: bool = False
+) -> ControllerParams:
+    kind = kind or args.kind
     raw: dict[str, object] = {
         "n_min": args.n_min,
         "min_total_verified": args.min_total_verified,
         "min_cost_saving": args.min_cost_saving,
     }
-    if args.kind == "bandit":
+    if kind in ("bandit", "evidence"):
         raw["exploration_families"] = list(args.explore_families or [])
         raw["exploration_risk_levels"] = ["low"] if args.explore_families else []
         raw["epsilon"] = args.epsilon
+    if with_evidence or kind == "evidence":
+        raw["evidence"] = {}  # the frozen evidence-module defaults
     return ControllerParams.model_validate(raw)
+
+
+def _prior_from(args: argparse.Namespace, params: ControllerParams) -> PairedPrior | None:
+    """The paired prior of `--paired-from`, refusing sources whose runtime/verifier differ."""
+    if not args.paired_from:
+        return None
+    assert params.evidence is not None
+    prior = load_prior(
+        args.paired_from, families=args.paired_families, n_min_pairs=params.evidence.n_min_pairs
+    )
+    verifier = SimulationVerifier().version
+    problems = [p for s in prior.sources for p in version_problems(s, RUNTIME_VERSION, verifier)]
+    if problems and not args.allow_version_mismatch:
+        raise SystemExit(
+            "paired sources do not match this runtime/verifier (use --allow-version-mismatch to "
+            "override and record it):\n  " + "\n  ".join(problems)
+        )
+    if not prior.cells:
+        raise SystemExit(
+            f"no (family, alternative) cell reaches n_min_pairs={params.evidence.n_min_pairs}; "
+            f"excluded: {prior.excluded}"
+        )
+    return prior
 
 
 # ---- registry commands --------------------------------------------------------------------------
@@ -104,13 +147,14 @@ def _cmd_train(args: argparse.Namespace) -> int:
     records = log.outcome_records(args.tenant, policy_versions=args.policy_versions)
     if args.last:
         records = records[-args.last :]
-    params = _params(args)
-    snap = build_snapshot(records, args.tenant, params)
+    params = _params(args, with_evidence=bool(args.paired_from))
+    prior = _prior_from(args, params)
+    snap = build_snapshot(records, args.tenant, params, prior=prior)
     version = max((r.version for r in store.list_versions(args.tenant, args.policy_id)), default=0)
     definition = ControllerPolicyDefinition(
         policy_id=args.policy_id,
         version=version + 1,
-        kind=ControllerKind(args.kind.upper()),
+        kind=KIND_NAMES[args.kind],
         params=params,
         snapshot=snap,
     )
@@ -123,6 +167,12 @@ def _cmd_train(args: argparse.Namespace) -> int:
         f"{snap.provenance.n_unacted_excluded if snap.provenance else 0} unacted excluded); "
         f"calibration n={cal.n if cal else 0} ece={cal.ece if cal else None} ok={cal.ok if cal else False}"
     )
+    if prior is not None:
+        print(
+            f"paired prior: {len(prior.cells)} cell(s), {sum(c.n for c in prior.cells.values())} "
+            f"pairs from {len(prior.sources)} source(s), {prior.validation_tokens:,} validation "
+            f"tokens (learning cost); excluded below n_min_pairs: {prior.excluded or 'none'}"
+        )
     return 0
 
 
@@ -272,23 +322,60 @@ def _cmd_replay(args: argparse.Namespace) -> int:
 
 
 # ---- offline simulation -------------------------------------------------------------------------
+def _prior_note(prior: PairedPrior) -> str:
+    cells = ", ".join(f"`{k}` n={c.n}" for k, c in prior.cells.items())
+    return (
+        f" Paired prior (for the `+prior` controllers): {cells or 'no cell'}; "
+        f"{prior.validation_tokens:,} validation tokens; excluded below n_min_pairs: "
+        f"{prior.excluded or 'none'}."
+    )
+
+
+SIM_KINDS = ("cost_aware", "bandit", "evidence", "cost_aware+prior", "evidence+prior")
+
+
 def _cmd_simulate(args: argparse.Namespace) -> int:
     warm_tasks = []
     for path in args.warm or []:
         res = ExperimentResult.model_validate_json(Path(path).read_text())
         warm_tasks += from_experiment(res, families=args.families)[0]
     warm = rule_log(warm_tasks) if warm_tasks else []
+    prior = (
+        load_prior(
+            args.prior,
+            families=args.families,
+            subsample_n=args.prior_subsample,
+            subsample_families=args.prior_subsample_families,
+        )
+        if args.prior
+        else None
+    )
+    if any(k.endswith("+prior") for k in args.kinds) and prior is None:
+        raise SystemExit("a '+prior' kind needs --prior RESULTS ...")
     sets: list[SimSet] = []
-    for name, path in args.heldout:
-        res = ExperimentResult.model_validate_json(Path(path).read_text())
-        tasks, env = from_experiment(res, families=args.families)
+    for name, *paths in args.heldout:
+        tasks, env = [], EnvReport(0, 0, 0)
+        for i, path in enumerate(paths):
+            res = ExperimentResult.model_validate_json(Path(path).read_text())
+            part, e = from_experiment(
+                res, families=args.families, id_prefix=f"h{i}:" if len(paths) > 1 else ""
+            )
+            tasks += part
+            env = EnvReport(
+                env.n_pairs + e.n_pairs,
+                env.n_unknown_dropped + e.n_unknown_dropped,
+                env.n_without_capability + e.n_without_capability,
+            )
         if args.protected_share:
             tasks = with_protected_share(tasks, args.protected_share)
         entries = []
-        for kind in args.kinds:
-            ns = argparse.Namespace(**{**vars(args), "kind": kind})
+        for label in args.kinds:
+            base, with_prior = label.removesuffix("+prior"), label.endswith("+prior")
             cfg = SimConfig(
-                ControllerKind(kind.upper()), _params(ns), refresh_every=args.refresh_every
+                KIND_NAMES[base],
+                _params(args, kind=base, with_evidence=with_prior),
+                refresh_every=args.refresh_every,
+                prior=prior if with_prior else None,
             )
             cmp, _ = evaluate(
                 tasks,
@@ -298,13 +385,14 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
                 warm=warm,
                 horizon=args.horizon or None,
             )
-            entries.append(SimEntry(kind, cfg, cmp))
+            entries.append(SimEntry(label, cfg, cmp))
         sets.append(
             SimSet(
                 name,
                 len(tasks),
                 f"{env.n_pairs} (task, repetition) pairs; {env.n_unknown_dropped} UNKNOWN dropped; "
-                f"{env.n_without_capability} without an eligible capability.",
+                f"{env.n_without_capability} without an eligible capability."
+                + (_prior_note(prior) if prior is not None else ""),
                 tasks,
                 entries,
             )
@@ -322,6 +410,20 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
                             "cost_ratio": e.comparison.cost_ratio,
                             "deviation_rate": e.comparison.deviation_rate,
                             "exploration_rate": e.comparison.exploration_rate,
+                            "families": {
+                                fam: {
+                                    "n_tasks": fr.n_tasks,
+                                    "success_diff": fr.success_diff,
+                                    "cost_ratio": fr.cost_ratio,
+                                    "verdict_cell": fr.verdict_cell.value,
+                                    "verdict_a2": fr.verdict_a2.value,
+                                    "deviation_rate": fr.deviation_rate,
+                                    "exploration_rate": fr.exploration_rate,
+                                    "exploration_successes_lost_per_order": fr.exploration_successes_lost_per_order,
+                                    "exploration_tokens_delta_per_order": fr.exploration_tokens_delta_per_order,
+                                }
+                                for fam, fr in e.comparison.family_results.items()
+                            },
                         }
                         for e in s.entries
                     }
@@ -483,7 +585,7 @@ def _common(p: argparse.ArgumentParser) -> None:
 
 
 def _tuning(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--kind", choices=["cost_aware", "bandit"], default="cost_aware")
+    p.add_argument("--kind", choices=sorted(KIND_NAMES), default="cost_aware")
     p.add_argument("--explore-families", nargs="*", default=None)
     p.add_argument("--epsilon", type=float, default=0.10)
     p.add_argument("--n-min", type=int, default=30)
@@ -511,6 +613,19 @@ def main(argv: list[str] | None = None) -> int:
     _tuning(tr)
     tr.add_argument("--last", type=int, default=0, help="train on the last N logged decisions")
     tr.add_argument("--policy-versions", nargs="*", default=None)
+    tr.add_argument(
+        "--paired-from",
+        nargs="+",
+        default=None,
+        metavar="RESULTS",
+        help="held-out arm A/E experiment files seeding a paired prior (M6.1)",
+    )
+    tr.add_argument("--paired-families", nargs="*", default=None)
+    tr.add_argument(
+        "--allow-version-mismatch",
+        action="store_true",
+        help="accept paired sources recorded under another runtime or verifier version",
+    )
     tr.set_defaults(func=_cmd_train)
 
     ev = sub.add_parser("evaluate", help="record offline / shadow / canary evidence")
@@ -544,12 +659,24 @@ def main(argv: list[str] | None = None) -> int:
 
     sm = sub.add_parser("simulate", help="prequential full-information evaluation (offline)")
     sm.add_argument(
-        "--heldout", nargs=2, action="append", metavar=("NAME", "RESULTS"), required=True
+        "--heldout",
+        nargs="+",
+        action="append",
+        metavar=("NAME", "RESULTS"),
+        required=True,
+        help="NAME RESULTS [RESULTS ...]: several result files are merged into one stream",
     )
-    sm.add_argument("--warm", nargs="*", default=None, help="recorded runs used as a rule-only log")
     sm.add_argument(
-        "--kinds", nargs="+", choices=["cost_aware", "bandit"], default=["cost_aware", "bandit"]
+        "--prior",
+        nargs="+",
+        default=None,
+        metavar="RESULTS",
+        help="held-out arm A/E files for the paired prior of the '+prior' kinds",
     )
+    sm.add_argument("--prior-subsample", type=int, default=0, help="keep N tasks per family")
+    sm.add_argument("--prior-subsample-families", nargs="*", default=None)
+    sm.add_argument("--warm", nargs="*", default=None, help="recorded runs used as a rule-only log")
+    sm.add_argument("--kinds", nargs="+", choices=SIM_KINDS, default=["cost_aware", "bandit"])
     sm.add_argument("--explore-families", nargs="*", default=None)
     sm.add_argument("--epsilon", type=float, default=0.10)
     sm.add_argument("--n-min", type=int, default=30)

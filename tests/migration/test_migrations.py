@@ -140,3 +140,42 @@ def test_0005_backfills_acted_true_and_downgrades_cleanly(scratch_database: str)
         assert conn.execute(sa.text("SELECT count(*) FROM policy_decisions")).scalar_one() == 1
     assert "controller_policies" not in _tables(engine)
     engine.dispose()
+
+
+def _insert_policy(conn: sa.Connection, kind: str, version: int) -> None:
+    conn.execute(
+        sa.text(
+            "INSERT INTO controller_policies (version_id, tenant_id, policy_id, version, kind, "
+            "state, definition, definition_hash, created_at) VALUES (gen_random_uuid(), 't', 'p', "
+            ":v, :k, 'CANDIDATE', '{}', 'h', now())"
+        ),
+        {"v": version, "k": kind},
+    )
+
+
+def test_0006_allows_the_evidence_driven_kind_and_never_rewrites_history(
+    scratch_database: str,
+) -> None:
+    migrate(scratch_database, "0005")
+    engine = sa.create_engine(scratch_database)
+    with engine.begin() as conn:
+        _insert_policy(conn, "BANDIT", 1)
+    with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
+        _insert_policy(conn, "EVIDENCE_DRIVEN", 2)  # not allowed before 0006
+    migrate(scratch_database)
+    with engine.begin() as conn:
+        _insert_policy(conn, "EVIDENCE_DRIVEN", 2)
+    with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
+        _insert_policy(conn, "UNKNOWN_KIND", 3)
+    with pytest.raises(sa.exc.DBAPIError, match="not rewriting history"):
+        downgrade(scratch_database, "0005")
+    with engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT count(*) FROM controller_policies")).scalar_one() == 2
+    with engine.begin() as conn:  # only with the evidence-driven rows gone can it step back
+        conn.execute(sa.text("ALTER TABLE controller_policies DISABLE TRIGGER ALL"))
+        conn.execute(sa.text("DELETE FROM controller_policies WHERE kind = 'EVIDENCE_DRIVEN'"))
+        conn.execute(sa.text("ALTER TABLE controller_policies ENABLE TRIGGER ALL"))
+    downgrade(scratch_database, "0005")
+    with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
+        _insert_policy(conn, "EVIDENCE_DRIVEN", 4)
+    engine.dispose()

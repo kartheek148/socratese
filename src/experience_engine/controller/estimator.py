@@ -9,6 +9,7 @@ import hashlib
 from collections.abc import Sequence
 
 from experience_engine.controller.calibration import CalibrationGate, prequential_calibration
+from experience_engine.controller.paired import PairedPrior
 from experience_engine.domain.controller import (
     CellStats,
     ControllerParams,
@@ -37,6 +38,7 @@ def build_snapshot(
     tenant_id: str,
     params: ControllerParams | None = None,
     gate: CalibrationGate | None = None,
+    prior: PairedPrior | None = None,
 ) -> EstimatorSnapshot:
     params = params or ControllerParams()
     for r in records:
@@ -70,4 +72,6 @@ def build_snapshot(
         n_verified=len(known),
         calibration=prequential_calibration(known, params.cost_prior_weight, gate),
         provenance=provenance,
+        paired=dict(prior.cells) if prior else {},
+        prior_sources=list(prior.sources) if prior else [],
     )

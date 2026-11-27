@@ -1,4 +1,5 @@
 import math
+from functools import lru_cache
 
 
 def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -11,6 +12,7 @@ def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, flo
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
+@lru_cache(maxsize=64)
 def normal_quantile(confidence: float) -> float:
     """One-sided standard-normal quantile by bisection on the erf-based CDF (no scipy)."""
     lo, hi = 0.0, 8.0

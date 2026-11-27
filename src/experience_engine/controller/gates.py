@@ -74,8 +74,15 @@ def evaluate_offline(
         "calibration_ece": cal.ece if cal else None,
         "calibration_skill": cal.brier_skill if cal else None,
     }
+    paired = definition.snapshot.paired
+    sources = definition.snapshot.prior_sources
+    metrics["prior_cells"] = len(paired)
+    metrics["prior_pairs"] = sum(c.n for c in paired.values())
+    metrics["prior_validation_tokens"] = sum(s.validation_tokens for s in sources)
     fail: list[str] = []
     pending: list[str] = []
+    if paired and (not sources or any(not s.tasks_sha256 or s.n_pairs <= 0 for s in sources)):
+        fail.append("paired priors without complete provenance (source, task hash, size)")
     if est.protected_deviations > g.max_protected_deviations:
         fail.append(
             f"{est.protected_deviations} protected-class deviation(s) from the rule baseline"

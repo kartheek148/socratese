@@ -9,7 +9,9 @@ evidence and a non-inferiority bound; cost is only minimised among actions that 
 from dataclasses import dataclass
 
 from experience_engine.controller.estimator import cost_hat, p_hat
+from experience_engine.controller.evidence import explorable_evidence, greedy_evidence
 from experience_engine.controller.features import build_features
+from experience_engine.controller.modes import MODE_DEFERRED, MODE_EXPLORE, MODE_GREEDY
 from experience_engine.domain.controller import (
     CONTROLLER_KEY,
     ControllerKind,
@@ -23,9 +25,7 @@ from experience_engine.domain.decision import ControllerDecision, Strategy
 from experience_engine.domain.stats import newcombe_difference_bounds, wilson_one_sided
 from experience_engine.execution.controller import SELECTED_CAPABILITY_KEY, ControllerInput
 
-MODE_DEFERRED = "DEFERRED"
-MODE_GREEDY = "GREEDY"
-MODE_EXPLORE = "EXPLORE"
+__all__ = ["MODE_DEFERRED", "MODE_EXPLORE", "MODE_GREEDY"]
 
 
 @dataclass(frozen=True)
@@ -166,8 +166,12 @@ def choose(f: DecisionFeatures, params: ControllerParams) -> Choice:
         return _deferred(f, "task tenant differs from the policy's tenant")
     if len(keys) == 1:
         return _deferred(f, "single feasible action")
-    greedy, reason, est, greedy_mode = _greedy(f, params)
-    pool = _explorable(f, params, greedy)
+    if f.evidence_module and params.evidence is not None:
+        greedy, reason, est, greedy_mode, assess = greedy_evidence(f, params, _estimates(f, params))
+        pool = explorable_evidence(f, params, greedy, assess)
+    else:
+        greedy, reason, est, greedy_mode = _greedy(f, params)
+        pool = _explorable(f, params, greedy)
     if len(pool) < 2 or f.u is None:
         return Choice(greedy, 1.0, {greedy: 1.0}, est, reason, greedy_mode)
     eps = params.epsilon

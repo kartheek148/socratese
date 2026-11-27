@@ -8,9 +8,17 @@ decision can be recomputed from the stored record and the policy version alone.
 import hashlib
 import json
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from experience_engine.domain.decision import Strategy
 from experience_engine.domain.outcome import OutcomeStatus
@@ -40,6 +48,11 @@ def cell_key(family: str | None, risk: str, key: str) -> str:
     return f"{family or '-'}|{risk}|{key}"
 
 
+def paired_key(family: str | None, risk: str, default_key: str, alt_key: str) -> str:
+    """Key of a paired prior cell: the rule default and one alternative in one context."""
+    return f"{family or '-'}|{risk}|{default_key}>{alt_key}"
+
+
 def canonical_hash(obj: object) -> str:
     return hashlib.sha256(
         json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -53,6 +66,17 @@ def _default_learned() -> list[LearnedRisk]:
 class ControllerKind(StrEnum):
     COST_AWARE = "COST_AWARE"  # deterministic, never explores
     BANDIT = "BANDIT"  # cost-aware + gated epsilon-greedy exploration
+    EVIDENCE_DRIVEN = "EVIDENCE_DRIVEN"  # explores only while non-inferiority is unresolved (M6.1)
+
+
+class EvidenceParams(_F):
+    """M6.1 evidence module (frozen defaults: evidence-driven-controller-design.md section 6)."""
+
+    n_min_pairs: int = Field(default=30, ge=2)  # paired tasks needed before a prior cell is used
+    drift_min_n: int = Field(default=30, ge=1)  # live outcomes needed before the drift guard acts
+    explore_target_cap: int = Field(
+        default=400, ge=1
+    )  # per-alternative cap of the exploration target
 
 
 class ControllerParams(_F):
@@ -69,6 +93,16 @@ class ControllerParams(_F):
     min_cost_saving: float = Field(default=0.10, ge=0.0, lt=1.0)
     cost_prior_weight: float = Field(default=5.0, ge=0.0)
     required_success: dict[str, float] = Field(default_factory=dict)
+    # None = M6 behaviour (priors ignored, constant-epsilon bandit). Omitted from the serialised
+    # form when None, so every M6 definition keeps its hash.
+    evidence: EvidenceParams | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_evidence(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.evidence is None:
+            data.pop("evidence", None)
+        return data
 
     @field_validator("learned_risk_levels", "exploration_risk_levels", "exploration_families")
     @classmethod
@@ -86,6 +120,8 @@ class ControllerParams(_F):
             raise ValueError("non-inferiority margins must lie in [0, 1]")
         if any(not 0.0 <= r <= 1.0 for r in self.required_success.values()):
             raise ValueError("required success thresholds must lie in [0, 1]")
+        if self.evidence is not None and self.required_success:
+            raise ValueError("required_success is not supported with the evidence module")
         return self
 
 
@@ -101,6 +137,56 @@ class CellStats(_F):
         if self.successes > self.n:
             raise ValueError("successes cannot exceed trials")
         return self
+
+
+class PairedCell(_F):
+    """Held-out outcomes of the rule default and ONE alternative on the same tasks (2x2 table).
+
+    The unit is the final production outcome (planner fallback included). UNKNOWN pairs are never
+    counted. Tokens are the sums over the same tasks for each action.
+    """
+
+    n: int = Field(ge=0)
+    both: int = Field(ge=0)
+    default_only: int = Field(ge=0)
+    alt_only: int = Field(ge=0)
+    neither: int = Field(ge=0)
+    default_tokens: int = Field(ge=0)
+    alt_tokens: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _table(self) -> "PairedCell":
+        if self.both + self.default_only + self.alt_only + self.neither != self.n:
+            raise ValueError("paired table must sum to n")
+        return self
+
+    @property
+    def default_rate(self) -> float:
+        return (self.both + self.default_only) / self.n if self.n else 0.0
+
+    @property
+    def alt_rate(self) -> float:
+        return (self.both + self.alt_only) / self.n if self.n else 0.0
+
+
+class PairedSource(_F):
+    """Provenance of one paired validation source (what the prior was computed from)."""
+
+    name: str
+    arms: list[str]
+    splits: list[str]
+    dataset_hashes: dict[str, str]
+    model: str
+    runtime_version: str
+    verifier_version: str
+    n_pairs: int = Field(ge=0)
+    n_unknown_dropped: int = Field(ge=0)
+    n_tied_dropped: int = Field(ge=0)
+    tasks_sha256: str
+    validation_tokens: int = Field(
+        ge=0
+    )  # tokens of both actions over the used pairs: learning cost
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class CalibrationSummary(_F):
@@ -130,6 +216,18 @@ class EstimatorSnapshot(_F):
     n_verified: int = 0
     calibration: CalibrationSummary | None = None
     provenance: TrainingProvenance | None = None
+    # M6.1 paired validation priors; omitted from the serialised form when empty (M6 hashes)
+    paired: dict[str, PairedCell] = Field(default_factory=dict)
+    prior_sources: list[PairedSource] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_priors(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not self.paired:
+            data.pop("paired", None)
+        if not self.prior_sources:
+            data.pop("prior_sources", None)
+        return data
 
     @property
     def calibration_ok(self) -> bool:
@@ -147,6 +245,14 @@ class ControllerPolicyDefinition(_F):
     kind: ControllerKind
     params: ControllerParams
     snapshot: EstimatorSnapshot
+
+    @model_validator(mode="after")
+    def _evidence_consistent(self) -> "ControllerPolicyDefinition":
+        if self.kind == ControllerKind.EVIDENCE_DRIVEN and self.params.evidence is None:
+            raise ValueError("EVIDENCE_DRIVEN policies need the evidence parameters")
+        if self.snapshot.paired and self.params.evidence is None:
+            raise ValueError("paired priors need the evidence parameters")
+        return self
 
     @property
     def tenant_id(self) -> str:
@@ -176,6 +282,19 @@ class EvidenceView(_F):
     token_sum: int
 
 
+class PairedView(_F):
+    """The paired prior cell a decision read (the default vs alternative `key`)."""
+
+    key: str
+    n: int
+    both: int
+    default_only: int
+    alt_only: int
+    neither: int
+    default_tokens: int
+    alt_tokens: int
+
+
 class DecisionFeatures(_F):
     schema_version: int = FEATURE_SCHEMA_VERSION
     controller_kind: ControllerKind
@@ -192,6 +311,8 @@ class DecisionFeatures(_F):
     protected: bool = False
     tenant_mismatch: bool = False
     u: float | None = None  # reproducible uniform draw (exploration decision)
+    paired: list[PairedView] = Field(default_factory=list)  # M6.1 paired priors read
+    evidence_module: bool = False  # M6.1 decision rules apply (False: exact M6 behaviour)
 
 
 class DecisionOutcomeRecord(_F):

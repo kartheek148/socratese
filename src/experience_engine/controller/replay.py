@@ -12,8 +12,10 @@ from experience_engine.domain.controller import (
     DecisionFeatures,
     DecisionOutcomeRecord,
     EstimatorSnapshot,
+    PairedCell,
     action_key,
     cell_key,
+    paired_key,
 )
 from experience_engine.domain.decision import ControllerDecision
 from experience_engine.execution.controller import SELECTED_CAPABILITY_KEY
@@ -56,6 +58,14 @@ def replay_decision(
             e.token_sum,
         ):
             diffs.append(f"evidence for {e.key} does not match the registered snapshot")
+    for pv in f.paired:
+        pcell = definition.snapshot.paired.get(
+            paired_key(f.task_family, f.risk_level, f.default_key, pv.key)
+        )
+        if pcell is None or PairedCell(**pv.model_dump(exclude={"key"})) != pcell:
+            diffs.append(f"paired prior for {pv.key} does not match the registered snapshot")
+    if f.evidence_module != (definition.params.evidence is not None):
+        diffs.append("evidence-module flag differs from the registered definition")
     c = choose(f, definition.params)
     if c.selected_key != selected_key_of(decision):
         diffs.append(f"selected {selected_key_of(decision)!r}, recomputed {c.selected_key!r}")

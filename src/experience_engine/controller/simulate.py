@@ -11,11 +11,12 @@ stochastic process, it is not a repeated measurement.
 import random
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from experience_engine.controller.estimator import build_snapshot
 from experience_engine.controller.features import features_for
+from experience_engine.controller.paired import PairedPrior
 from experience_engine.controller.policy import MODE_EXPLORE, choose
 from experience_engine.domain.controller import (
     CandidateFeature,
@@ -34,6 +35,7 @@ from experience_engine.evaluation.task_stats import (
 
 NONINFERIORITY = 0.05
 COST_MARGIN = 0.05
+CELL_MARGIN = 0.10  # the controller's contractual per-cell non-inferiority margin (delta_low)
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,8 @@ class SimConfig:
     policy_id: str = "adaptive"
     # train each published snapshot on the last N logged outcomes only (recency under drift)
     train_window: int | None = None
+    # M6.1: paired validation prior carried by every published snapshot (never a live record)
+    prior: PairedPrior | None = None
 
 
 @dataclass(frozen=True)
@@ -148,7 +152,7 @@ def run_sequence(
     for i, idx in enumerate(order):
         if definition is None or i % cfg.refresh_every == 0:
             train = records if cfg.train_window is None else records[-cfg.train_window :]
-            snap = build_snapshot(train, cfg.tenant_id, cfg.params)
+            snap = build_snapshot(train, cfg.tenant_id, cfg.params, prior=cfg.prior)
             definition = ControllerPolicyDefinition(
                 policy_id=cfg.policy_id,
                 version=1 + i // cfg.refresh_every,
@@ -238,6 +242,24 @@ class Comparison:
     protected_deviations: int
     verdict: Verdict
     by_family: dict[str, tuple[ArmSummary, ArmSummary, float]]  # ctrl, baseline, deviation rate
+    family_results: "dict[str, FamilyResult]" = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FamilyResult:
+    """One family's controller-vs-rule comparison (the pre-registered per-cell acceptance unit)."""
+
+    n_tasks: int
+    controller: ArmSummary
+    baseline: ArmSummary
+    success_diff: tuple[float | None, float | None, float | None]
+    cost_ratio: tuple[float | None, float | None, float | None]
+    verdict_a2: "Verdict"  # non-inferiority margin 0.05 (M6 rule)
+    verdict_cell: "Verdict"  # margin = the controller's contractual 0.10
+    deviation_rate: float
+    exploration_rate: float
+    exploration_successes_lost_per_order: float
+    exploration_tokens_delta_per_order: float
 
 
 def _summary(success: Sequence[bool], tokens: Sequence[int]) -> ArmSummary:
@@ -279,40 +301,69 @@ def decide_verdict(
     return Verdict.INCONCLUSIVE
 
 
-def compare(runs: Sequence[Sequence[SimStep]], margin: float = NONINFERIORITY) -> Comparison:
-    """Controller vs rule baseline over several orders; the unit of inference is the task."""
+def _inference(
+    steps: Sequence[SimStep],
+) -> tuple[
+    tuple[float | None, float | None, float | None],
+    tuple[float | None, float | None, float | None],
+    int,
+]:
+    """Per-task paired success difference and tokens-per-success ratio (cluster bootstrap)."""
     per_task: dict[str, list[SimStep]] = defaultdict(list)
-    for steps in runs:
-        for s in steps:
-            per_task[s.task_id].append(s)
-    ids = sorted(per_task)
+    for st in steps:
+        per_task[st.task_id].append(st)
     diffs: list[float] = []
     units: list[CostUnit] = []
-    for tid in ids:
+    for tid in sorted(per_task):
         ss = per_task[tid]
-        c_succ = sum(s.success for s in ss) / len(ss)
-        b_succ = sum(s.default_success for s in ss) / len(ss)
+        c_succ = sum(x.success for x in ss) / len(ss)
+        b_succ = sum(x.default_success for x in ss) / len(ss)
         diffs.append(c_succ - b_succ)
         units.append(
             CostUnit(
-                tokens_strategy=sum(s.tokens for s in ss) / len(ss),
+                tokens_strategy=sum(x.tokens for x in ss) / len(ss),
                 verified_strategy=c_succ,
-                tokens_baseline=sum(s.default_tokens for s in ss) / len(ss),
+                tokens_baseline=sum(x.default_tokens for x in ss) / len(ss),
                 verified_baseline=b_succ,
             )
         )
-    flat = [s for steps in runs for s in steps]
     pt, lo, hi, _ = paired_difference(diffs)
     rp, rlo, rhi, _ = cost_per_success_ratio(units)
-    diff = (pt, lo, hi)
-    ratio = (rp, rlo, rhi)
+    return (pt, lo, hi), (rp, rlo, rhi), len(per_task)
+
+
+def compare(runs: Sequence[Sequence[SimStep]], margin: float = NONINFERIORITY) -> Comparison:
+    """Controller vs rule baseline over several orders; the unit of inference is the task."""
+    flat = [s for steps in runs for s in steps]
+    diff, ratio, n_tasks = _inference(flat)
     fams: dict[str, list[SimStep]] = defaultdict(list)
     for s in flat:
         fams[s.family or "-"].append(s)
     n_orders = len(runs)
     explore = [s for s in flat if s.explored]
+    family_results: dict[str, FamilyResult] = {}
+    for fam, ss in sorted(fams.items()):
+        f_diff, f_ratio, f_n = _inference(ss)
+        f_expl = [x for x in ss if x.explored]
+        family_results[fam] = FamilyResult(
+            n_tasks=f_n,
+            controller=_summary([x.success for x in ss], [x.tokens for x in ss]),
+            baseline=_summary([x.default_success for x in ss], [x.default_tokens for x in ss]),
+            success_diff=f_diff,
+            cost_ratio=f_ratio,
+            verdict_a2=decide_verdict(f_diff, f_ratio, margin),
+            verdict_cell=decide_verdict(f_diff, f_ratio, CELL_MARGIN),
+            deviation_rate=sum(x.deviated for x in ss) / len(ss),
+            exploration_rate=len(f_expl) / len(ss),
+            exploration_successes_lost_per_order=sum(
+                int(x.default_success) - int(x.success) for x in f_expl
+            )
+            / max(1, n_orders),
+            exploration_tokens_delta_per_order=sum(x.tokens - x.default_tokens for x in f_expl)
+            / max(1, n_orders),
+        )
     return Comparison(
-        n_tasks=len(ids),
+        n_tasks=n_tasks,
         n_orders=n_orders,
         controller=_summary([s.success for s in flat], [s.tokens for s in flat]),
         baseline=_summary([s.default_success for s in flat], [s.default_tokens for s in flat]),
@@ -336,6 +387,7 @@ def compare(runs: Sequence[Sequence[SimStep]], margin: float = NONINFERIORITY) -
             )
             for f, ss in sorted(fams.items())
         },
+        family_results=family_results,
     )
 
 

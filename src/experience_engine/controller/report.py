@@ -95,4 +95,23 @@ def render_sim_report(sets: Sequence[SimSet], title: str, preamble: str = "") ->
             for fam, (ca, ba, dev) in e.comparison.by_family.items():
                 out.append(f"| {e.kind} | {fam} | {_arm(ca)} | {_arm(ba)} | {dev:.1%} |")
         out.append("")
+        if any(e.comparison.family_results for e in s.entries):
+            out += [
+                "Per-family verdicts (per-task cluster bootstrap, one-sided 95%). The cell verdict uses the "
+                "controller's contractual 10-point non-inferiority margin; the A2 verdict uses the M6 "
+                "5-point margin (under-powered at these sizes).",
+                "",
+                "| controller | family | tasks | success diff [bounds] | cost ratio [bounds] | cell verdict (10 pt) | A2 verdict (5 pt) | deviates | explores | exploration: successes lost / tokens vs default (per order) |",
+                "|---|---|---|---|---|---|---|---|---|---|",
+            ]
+            for e in s.entries:
+                for fam, fr in e.comparison.family_results.items():
+                    out.append(
+                        f"| {e.kind} | {fam} | {fr.n_tasks} | {_ci(fr.success_diff)} | "
+                        f"{_ci(fr.cost_ratio, pct=False)} | **{fr.verdict_cell.value}** | "
+                        f"{fr.verdict_a2.value} | {fr.deviation_rate:.1%} | "
+                        f"{fr.exploration_rate:.1%} | {fr.exploration_successes_lost_per_order:.1f} / "
+                        f"{fr.exploration_tokens_delta_per_order:+,.0f} |"
+                    )
+            out.append("")
     return "\n".join(out) + "\n"

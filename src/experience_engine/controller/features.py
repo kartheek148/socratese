@@ -9,8 +9,10 @@ from experience_engine.domain.controller import (
     ControllerPolicyDefinition,
     DecisionFeatures,
     EvidenceView,
+    PairedView,
     Risk,
     cell_key,
+    paired_key,
 )
 from experience_engine.execution.controller import ControllerInput
 
@@ -45,7 +47,16 @@ def features_for(
                         key=a.key, n=cell.n, successes=cell.successes, token_sum=cell.token_sum
                     )
                 )
-    bandit = definition.kind == ControllerKind.BANDIT
+    module = definition.params.evidence is not None
+    paired: list[PairedView] = []
+    if module and not protected and not mismatch:  # protected / foreign contexts never read priors
+        for a in actions:
+            if a.key == default_key:
+                continue
+            pcell = definition.snapshot.paired.get(paired_key(family, risk, default_key, a.key))
+            if pcell is not None:
+                paired.append(PairedView(key=a.key, **pcell.model_dump()))
+    explores = definition.kind in (ControllerKind.BANDIT, ControllerKind.EVIDENCE_DRIVEN)
     return DecisionFeatures(
         controller_kind=definition.kind,
         task_family=family,
@@ -61,8 +72,10 @@ def features_for(
         protected=protected,
         tenant_mismatch=mismatch,
         u=explore_draw(decision_id, definition.policy_version)
-        if bandit and not protected and not mismatch
+        if explores and not protected and not mismatch
         else None,
+        paired=paired,
+        evidence_module=module,
     )
 
 

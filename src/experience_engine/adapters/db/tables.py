@@ -672,7 +672,7 @@ controller_policies = sa.Table(
     sa.CheckConstraint(
         "state IN (" + ",".join(f"'{s}'" for s in CONTROLLER_STATES) + ")", name="state"
     ),
-    sa.CheckConstraint("kind IN ('COST_AWARE','BANDIT')", name="kind"),
+    sa.CheckConstraint("kind IN ('COST_AWARE','BANDIT','EVIDENCE_DRIVEN')", name="kind"),
     sa.CheckConstraint("version >= 1", name="version_positive"),
     sa.Index("ix_controller_policies_tenant_id_policy_id_state", "tenant_id", "policy_id", "state"),
     # at most one ACTIVE / CANARY / SHADOW version of a policy, enforced by the database
