@@ -15,7 +15,7 @@ All simulation results are on **synthetic** streams with known ground truth (the
 | Is it faster? | **Yes.** Median delay from the end of a temporary disturbance to restoration: S5 80 [IQR 50–140] decisions (C) vs 305 [240–350] native; R3 100 vs 276. |
 | Does it protect users? | **Yes.** No live probes at all (native: 85–105 per stream). Native recovery exposes users to the degraded alternative in up to +56 extra decisions per stream (R1 +56, S2 +48, R2 +47, S4 +42); revalidation adds none. |
 | Is sequential testing worth it? | **Yes.** C spends **45 % [43–47 %]** of A's revalidation tokens, with equal or better restoration and safety; on a dead capability (S2) 0.28M vs 2.55M tokens. B (evidence-threshold readiness) is identical to A on 938/1,000 streams: no demonstrated value here. |
-| Is it worth its cost? | **No, not at this scale.** Net utility vs M6.2 pooled over S5/R3/R4/S8/S8b: A −59.4 [−63.1, −55.8], B −58.3, **C −29.7 [−33.6, −25.8]**; vs permanent quarantine C −21.1 [−25.1, −17.1]. Break-even needs ≈ 370 *restored* decisions per ≈ 1M tokens; streams of 800 decisions restore around position 480–600. {{HORIZON}} |
+| Is it worth its cost? | **No, not at this scale.** Net utility vs M6.2 pooled over S5/R3/R4/S8/S8b: A −59.4 [−63.1, −55.8], B −58.3, **C −29.7 [−33.6, −25.8]**; vs permanent quarantine C −21.1 [−25.1, −17.1]. Break-even needs ≈ 370 *restored* decisions per ≈ 1M tokens; streams of 800 decisions restore around position 480–600. Exploratory long-horizon runs (§11) flip the sign only where native recovery is impossible (S8: C vs native **+176** utility [+111, +233]); for temporary disturbances native recovery catches up and stays ahead. |
 
 **Verdict (frozen rule, applied by code).** Clause 1 (NOT SUPPORTED) does not apply: safety holds for every strategy and every strategy restores more S5 streams than M6.2 (84 vs 51). Clause 2 (SUPPORTED) needs a strategy meeting (a)–(e): none does ((b) fails on R4 for all, (c) fails narrowly for A/B, (e) fails for all). Clause 3 applies: C meets (a), (d) and (c) → **PARTIALLY SUPPORTED**. The pre-registered "candidate strategy" (the one meeting (a)–(d) with the fewest tokens) is **none**, because no strategy meets (b).
 
@@ -76,7 +76,25 @@ All five verdicts exist and are tested; only an explicitly verified pass is a su
 
 ## 11. Economics
 
-{{ECONOMICS}}
+**Spend.** Revalidation tokens per stream (production tokens are in the tables): C — S5 1.08M, R3 1.10M, R4 0.83M, S8 0.97M, S8b 1.70M, R5 1.05M, and on must-not-restore cells S2 0.28M, R2 0.28M, R1 0.73M, S4 0.44M; A — 1.8M, 1.8M, 1.2M, 1.4M, 2.2M, 2.6M and 2.6M, 2.3M, 2.4M, 0.44M. S8b is the most expensive *should-restore* case because staleness recurs: the evidence ages out again every 250 simulated hours, so the cell is quarantined and revalidated repeatedly (C: 1.9 cases and 1.65 restorations per stream, against 1.0 case for permanent quarantine); **this recurring cost is the maintenance cost of keeping aged evidence in service** and is included in every figure.
+
+**Net utility** (utility = verified successes − (production + revalidation tokens)/20,000, per stream, vs the rule baseline on the same stream; C vs M6.2 native): S5 +9.1 vs +38.9; R3 +22.7 vs +56.5; R4 −4.8 vs +38.2; S8 +47.5 vs +46.4; S8b −2.6 vs +40.0; pooled difference C − native **−29.7 [−33.6, −25.8]** (A −59.4, B −58.3); C vs permanent quarantine −21.1 [−25.1, −17.1]. Only where native recovery is impossible (S8) does C match it, and M6.1's coarse guard — which never quarantines a harmless runtime change — still wins there (+117.5).
+
+**The price per additional verified success** (independent of the weight λ in the utility): against native recovery, C buys **+4.84 [4.01, 5.73] verified successes per stream** (S5 +5.5, R3 +3.6, R4 +0.8, S8 +8.2, S8b +6.2) at a net token cost of **+690k** (revalidation +1,137k, production −447k because a restored alternative is cheaper): **≈ 142k tokens per extra verified success** (A: +4.26 for +1,273k = 299k). A verified success must be worth ≥ 142k tokens — 7× the 20k assumed by the utility definition, about 22 trials' cost — for C to pay for itself against native recovery in this world.
+
+**What the token utility does not show: user-facing exposure.** M6.2's native recovery sends 85–105 live probes per stream to the quarantined alternative; revalidation sends none. Relative to permanent quarantine, native recovery runs the *degraded* alternative on up to +56 more production decisions per stream (R1 +56, S2 +48, R2 +47, S4 +42; S5/R3/R4 +5), which is where its lost verified successes go (S2: −32.2 successes vs −16.1 for permanent quarantine and for revalidation). Revalidation moves that cost out of the user's path and into the learning plane — at a price paid in tokens.
+
+**Break-even** (arithmetic on the measured costs, in the tables file): a restored alternative earns ≈ 0.145 utility per decision; C's ≈ 1M tokens (≈ 54 utility) therefore need ≈ 370 restored decisions to be repaid; streams of 800 decisions restore around position 480–600.
+
+**Horizon sensitivity (exploratory; development seeds 110000–110019; streams of 2,400 decisions with the same events at the same positions).** Δ utility vs the rule baseline [95 % CI]; restored out of 20:
+
+| scenario | m61 | m62 native | permanent quarantine | A | C | C − native |
+|---|---|---|---|---|---|---|
+| S5 temporary disturbance | +168.5 (0/20) | **+235.9** (19/20) | +25.7 (0/20) | +150.6 (17/20) | +179.0 (16/20) | −56.8 [−116.4, −6.4] |
+| R3 common-cause outage | +188.5 | **+232.2** (20/20) | +41.1 | +185.4 (18/20) | +192.1 (16/20) | −40.1 [−105.5, +21.0] |
+| S8 runtime change (harmless) | **+349.5** | +48.6 (0/20) | +40.0 | +220.4 (18/20) | +224.8 (17/20) | **+176.2 [+111.1, +232.9]** |
+
+Given time, M6.2's slow native recovery restores almost every temporary disturbance (19–20/20) at negligible cost and remains ahead on net utility; revalidation still yields more verified successes (S5 +18.1 vs +14.9; R3 +32.0 vs +23.3) but at 1.3M tokens. It wins decisively only where native recovery cannot work at all (structural and, by the same mechanism, stale evidence) — and even there never quarantining (M6.1) is better when the change is harmless. **This motivates a reason-aware hybrid rather than a replacement** (§16).
 
 ## 12. Exploratory sensitivity (development seeds only; none changes the frozen configuration)
 
@@ -84,7 +102,17 @@ All five verdicts exist and are tested; only an explicitly verified pass is a su
 
 ## 13. Real-model case (exploratory)
 
-{{REAL}}
+One revalidation case on the **real model** (`ee-ctl reval-real`; Vertex `gemini-2.5-flash`, the production orchestrator and the independent simulation verifier, 240 fresh private tasks of dataset v3 generated with an unrecorded seed, strategy C, 8 concurrent real executions, no database). The cell is the M6.1 `timeout` cell: reference = the recorded planner success **0.454** (n = 238 paired tasks, 6,446 tokens per run; a research-only stress-fixture prior), quarantined for `STRUCTURAL_INVALIDATION` — i.e. the real analogue of S8, where the alternative may in fact be healthy.
+
+| | result |
+|---|---|
+| evidence stage | SPRT accepted after **47** counted trials: 26 successes (0.553), LLR 2.94 ≥ 2.77 (α = 0.05, β = 0.20, p_bad = 0.354, p_good = 0.454); mean 6,534 tokens per trial (reference 6,446, +1.4 %, within the cost guard) |
+| candidate → confirmation | 20 fresh trials, 9 successes (0.45): no collapse → `RECOVERED`, versions rebased to the current runtime/verifier (identical to the prior's) |
+| verdict mix over all 67 trials | 35 `SUCCESS`, 31 `FAILURE`, **1 `INVALID_OUTPUT`** (a real `INVALID_ACTION` termination, mapped by the executor, not by text) |
+| cost | **482k tokens** recorded (7.2k per trial) + 42k executed ahead but never recorded (disclosed); 871 s wall-clock with 8 concurrent executions |
+| production tables | untouched (the orchestrator runs without a run lifecycle; integration-tested) |
+
+Honest reading: this shows that the protocol runs end to end on a real model, verifier and task pool, that real trial cost (≈ 6.3–7.2k tokens) matches the simulated 6.5k, and that the real alternative looked at least as good as its record on fresh tasks. It is **one non-deterministic run, not an acceptance experiment**: with 47 trials the success interval [0.41, 0.69] is wide, the reference came from stress-fixture priors, and the case was constructed (the quarantine was assigned, not detected). **An earlier attempt exposed a real bug and is disclosed:** the trial source stamped trials with the case machine's *nominal* trial slot, which can lie in the future of the wall clock, so the candidate's confirmation gap never elapsed (32 trials, 20 successes, stuck in `RECOVERY_CANDIDATE`). A real executor now stamps its own observation time (`clock`), covered by an integration test; the simulated executor was unaffected, so no held-out result changes.
 
 ## 14. Tests, mutation checks and reproducibility
 

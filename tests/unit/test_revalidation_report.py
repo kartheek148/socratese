@@ -144,3 +144,26 @@ def test_the_rendered_report_states_every_criterion_and_the_verdict(tmp_path: Pa
     repro.write_text(path.read_text() + " ")
     assert "byte-identical: **NO**" in report(str(path), str(repro))
     assert set(load(str(path))) == set(by)
+
+
+def test_the_cli_round_trip_simulates_reports_and_is_deterministic(tmp_path: Path) -> None:
+    from experience_engine.controller_cli import main
+
+    def sim(name: str) -> Path:
+        out = tmp_path / name
+        args = ["reval-sim", "--scenarios", "S2", "S5", "--seeds", "1", "--workers", "1",
+                "--seed-start", "7300000", "--variants", "m62", "m62_locked", "m63_C",
+                "--json-out", str(out)]  # fmt: skip
+        assert main(args) == 0
+        return out
+
+    a, b = sim("a.json"), sim("b.json")
+    assert a.read_bytes() == b.read_bytes()  # the experiment is reproducible byte for byte
+    md = tmp_path / "r.md"
+    assert main(["reval-report", "--results", str(a), "--repro", str(b), "--out", str(md)]) == 0
+    text = md.read_text()
+    assert "byte-identical: **yes**" in text and "Verdict" in text and "S5" in text
+    assert main(["reval-sim", "--scenarios", "S2", "--seeds", "1", "--workers", "1",
+                 "--variants", "m62", "--horizon", "300", "--seed-start", "7300000",
+                 "--json-out", str(tmp_path / "h.json")]) == 0  # fmt: skip
+    assert '"n": 300' in (tmp_path / "h.json").read_text()  # the exploratory horizon override
