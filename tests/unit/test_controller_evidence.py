@@ -148,6 +148,29 @@ def test_m6_definitions_keep_their_hashes_and_serialised_form() -> None:
     assert again.definition_hash() == M6_COST_AWARE_HASH
 
 
+M61_EVIDENCE_HASH = "08b419f44b338f61c53c94cdf011e280cfc3bc450d0dacd4292d9b5b5f006c0c"
+M61_EVIDENCE_SNAPSHOT_HASH = "b99dae484cc0f64c128bbbb0c1681f6b7e42132b8a80bf47fe17ca90abff38e0"
+M61_COST_AWARE_EVIDENCE_HASH = "88d833fa8c339f5d33c8fec1783f80c5e16a67468bfbf613b1cb802820ff0681"
+
+
+def test_m61_evidence_definitions_keep_their_hashes() -> None:
+    """Computed BEFORE the M6.2 change: new optional fields (drift monitor, evidence provenance,
+    eligibility) must not alter a stored M6.1 evidence-driven definition."""
+    cell = pcell(90, 30, 30, 90, dt=9000, at=3000)
+    ev = evidence_definition(
+        cell,
+        kind=ControllerKind.EVIDENCE_DRIVEN,
+        exploration_risk_levels=["low"],
+        exploration_families=["pool"],
+        epsilon=0.1,
+    )
+    assert ev.definition_hash() == M61_EVIDENCE_HASH
+    assert ev.snapshot.snapshot_hash() == M61_EVIDENCE_SNAPSHOT_HASH
+    assert evidence_definition(cell).definition_hash() == M61_COST_AWARE_EVIDENCE_HASH
+    again = ControllerPolicyDefinition.model_validate(ev.model_dump(mode="json"))
+    assert again.definition_hash() == M61_EVIDENCE_HASH
+
+
 def test_evidence_definitions_serialise_their_priors_and_round_trip() -> None:
     d = evidence_definition(pcell(90, 30, 30, 90))
     dumped = d.model_dump(mode="json")
