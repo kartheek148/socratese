@@ -433,3 +433,63 @@ def point_summary(scores: Sequence[FamilyScore]) -> dict[str, Any]:
         else None,
         "median_delay": statistics.median(delays) if delays else None,
     }
+
+
+# ---- real-table track ---------------------------------------------------------------------------
+def real_streams(
+    tasks: Sequence[Any],
+    prior: Any,
+    scenario: Scenario,
+    seed: int,
+    length: int = 800,
+) -> Stream:
+    """A stream resampled (with replacement) from a *recorded* real-model full-information table,
+    with the scenario's synthetic perturbation overlaid on the alternative's observed outcomes."""
+    import random
+
+    from experience_engine.controller.scenarios import FamilySpec
+    from experience_engine.domain.outcome import OutcomeStatus
+
+    default_key = tasks[0].default_key
+    p_alt = sum(t.outcomes[PLANNING_KEY][0] == OutcomeStatus.VERIFIED_SUCCESS for t in tasks) / len(
+        tasks
+    )
+    fam = tasks[0].family or "timeout"
+    scen = Scenario(
+        scenario.sid,
+        scenario.title,
+        n=length,
+        families=(FamilySpec(fam, p_alt=p_alt),),
+        phases=scenario.phases,
+        noise_sd=scenario.noise_sd,
+        token_cv=scenario.token_cv,
+        max_age_days=scenario.max_age_days,
+        truth_is_drift=scenario.truth_is_drift,
+        stale_from=scenario.stale_from,
+    )
+    rng = random.Random(seed)
+    stream_tasks = [tasks[rng.randrange(len(tasks))] for _ in range(length)]
+    del default_key
+    return Stream(
+        scen,
+        seed,
+        stream_tasks,
+        prior,
+        0,
+        scen.perturbation(seed),
+        scen.material_positions(seed),
+    )
+
+
+def run_real_variants(
+    stream: Stream, base: DriftParams, variants: Sequence[str] = ("m61", "m62_shadow", "m62")
+) -> list[StreamResult]:
+    order = list(range(stream.scenario.n))
+    out: list[StreamResult] = []
+    for v in variants:
+        cfg = controller_config(v, stream, base)
+        run = run_stream(
+            stream.tasks, order, cfg, label=f"R-{stream.scenario.sid}-{stream.seed}-{v}"
+        )
+        out.append(score_run(stream, v, run.steps, run.transitions))
+    return out

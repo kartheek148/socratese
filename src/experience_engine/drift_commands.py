@@ -41,7 +41,10 @@ def _base_params(args: argparse.Namespace) -> DriftParams:
             update[name] = v
     if getattr(args, "threshold", None) is not None:
         update["cusum_threshold"] = args.threshold
-    return DriftParams().model_copy(update=update)
+    for item in getattr(args, "set", None) or []:  # exploratory sensitivity only
+        key, _, raw = item.partition("=")
+        update[key] = json.loads(raw)
+    return DriftParams.model_validate({**DriftParams().model_dump(mode="json"), **update})
 
 
 # ---- calibration --------------------------------------------------------------------------------
@@ -186,6 +189,10 @@ def render_sim(by: dict[str, dict[str, list[StreamResult]]], title: str, preambl
         sc = SCENARIOS[sid]
         out += [f"## {sid} - {sc.title}", ""]
         out += [
+            "`rule` is the rule baseline's recorded outcomes on the same streams; `m61` is the "
+            "M6.1 controller with its coarse guard and no monitor; `m62_shadow` records monitor "
+            "transitions without altering decisions; `m62` is ENFORCE.",
+            "",
             f"{len(next(iter(variants.values())))} streams of {sc.n} decisions "
             f"({len(sc.families)} famil{'y' if len(sc.families) == 1 else 'ies'}).",
             "",
@@ -197,9 +204,21 @@ def render_sim(by: dict[str, dict[str, list[StreamResult]]], title: str, preambl
         for v, rs in variants.items():
             s = summarize(rs, sc)
             ci = s["success_rate_ci"]
+            if v == "m61":  # the M6.1 controller has no monitor: detection metrics do not apply
+                out.append(
+                    f"| {v} | {s['success_rate']:.1%} [{ci[1]:.1%}, {ci[2]:.1%}] | "
+                    f"{s['tokens_per_success']:,.0f} | n/a (no monitor) | n/a | n/a | n/a | n/a | "
+                    "n/a | n/a |"
+                )
+                continue
+            perf = (
+                "n/a (alternative executed at every position)"
+                if v == "monitor"
+                else f"{s['success_rate']:.1%} [{ci[1]:.1%}, {ci[2]:.1%}]"
+            )
+            tps = "n/a" if v == "monitor" else f"{s['tokens_per_success']:,.0f}"
             out.append(
-                f"| {v} | {s['success_rate']:.1%} [{ci[1]:.1%}, {ci[2]:.1%}] | "
-                f"{s['tokens_per_success']:,.0f} | {s['false_alarm_streams']}/{s['n_streams']} "
+                f"| {v} | {perf} | {tps} | {s['false_alarm_streams']}/{s['n_streams']} "
                 f"({s['false_alarm_ub95']:.1%}) | {s['detected']}/{s['drift_streams']} | "
                 f"{s['missed']} | {_fmt_q(s['delay_quartiles'])} | "
                 f"{s['recovered']} | {_fmt_q(s['recovery_delay_quartiles'])} | "
@@ -281,10 +300,62 @@ def _cmd_sim(args: argparse.Namespace) -> int:
     return 0
 
 
+def _real_worker(job: tuple[str, int, str, list[str], str]) -> list[dict[str, Any]]:
+    sid, seed, base_json, variants, payload = job
+    from experience_engine.controller.drift_eval import real_streams, run_real_variants
+
+    held, prior = _REAL_CACHE[payload]
+    stream = real_streams(held, prior, SCENARIOS[sid], seed, length=SCENARIOS[sid].n)
+    return [
+        result_to_json(r)
+        for r in run_real_variants(stream, DriftParams.model_validate_json(base_json), variants)
+    ]
+
+
+_REAL_CACHE: dict[str, Any] = {}
+
+
+def _cmd_real(args: argparse.Namespace) -> int:
+    from experience_engine.controller.datasets import load_paired, load_prior
+
+    held, _ = load_paired(args.held, families=args.families)
+    prior = load_prior(args.prior, families=args.families)
+    _REAL_CACHE["k"] = (held, prior)
+    base = _base_params(args)
+    variants = list(args.variants)
+    seeds = list(range(args.seed_start, args.seed_start + args.orders))
+    jobs = [
+        (sid, s, base.model_dump_json(), variants, "k") for sid in args.scenarios for s in seeds
+    ]
+    by: dict[str, dict[str, list[StreamResult]]] = {
+        sid: {v: [] for v in variants} for sid in args.scenarios
+    }
+    raw: list[dict[str, Any]] = []
+    with _pool(args.workers) as pool:
+        for batch in pool.imap(_real_worker, jobs, chunksize=1):
+            for d in batch:
+                raw.append(d)
+                r = _from_json(json.loads(json.dumps(d)))
+                by[r.sid][r.variant].append(r)
+    preamble = (
+        f"{len(held)} real-model paired tasks (held-out table) resampled with replacement into "
+        f"{args.orders} streams per scenario; prior: {len(prior.sources)} recorded file(s), "
+        f"{sum(c.n for c in prior.cells.values())} paired tasks. Outcomes are real; the drift "
+        "overlays (S2-S5) are synthetic and labelled. The prior's files are stress-fixture "
+        "evidence: research-only, not production-eligible."
+    )
+    Path(args.out).write_text(render_sim(by, args.title, preamble))
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps(raw))
+    print(f"wrote {args.out} ({len(raw)} stream results)")
+    return 0
+
+
 def register(sub: Any) -> None:
-    from experience_engine import drift_db_commands
+    from experience_engine import drift_db_commands, drift_report
 
     drift_db_commands.register(sub)
+    drift_report.register(sub)
     cal = sub.add_parser(
         "drift-calibrate", help="calibrate the drift monitor on development streams"
     )
@@ -309,9 +380,39 @@ def register(sub: Any) -> None:
     sim.add_argument("--confidence", type=float, default=None)
     sim.add_argument("--persistence", type=int, default=None)
     sim.add_argument("--threshold", type=float, default=None)
+    sim.add_argument(
+        "--set",
+        nargs="*",
+        default=None,
+        metavar="KEY=VALUE",
+        help="EXPLORATORY override of a DriftParams field (e.g. probe_rate=0.5)",
+    )
     sim.add_argument("--workers", type=int, default=8)
     sim.add_argument("--title", default="M6.2 drift scenarios (generated, synthetic)")
     sim.add_argument("--preamble", default="")
     sim.add_argument("--out", required=True)
     sim.add_argument("--json-out", default=None)
     sim.set_defaults(func=_cmd_sim)
+
+    real = sub.add_parser(
+        "drift-real", help="the frozen monitor on a recorded real-model table (overlays synthetic)"
+    )
+    real.add_argument("--held", nargs="+", required=True, metavar="RESULTS")
+    real.add_argument("--prior", nargs="+", required=True, metavar="RESULTS")
+    real.add_argument("--families", nargs="*", default=["timeout"])
+    real.add_argument("--scenarios", nargs="+", default=["S1", "S2", "S4", "S5"],
+                      choices=list(SCENARIOS))  # fmt: skip
+    real.add_argument("--variants", nargs="+", default=["m61", "m62_shadow", "m62"],
+                      choices=list(VARIANTS))  # fmt: skip
+    real.add_argument("--orders", type=int, default=20)
+    real.add_argument("--seed-start", type=int, default=20260602)
+    real.add_argument("--detector", choices=["WINDOW", "CUSUM"], default=None)
+    real.add_argument("--confidence", type=float, default=None)
+    real.add_argument("--persistence", type=int, default=None)
+    real.add_argument("--threshold", type=float, default=None)
+    real.add_argument("--set", nargs="*", default=None, metavar="KEY=VALUE")
+    real.add_argument("--workers", type=int, default=4)
+    real.add_argument("--title", default="M6.2 real-model table (generated)")
+    real.add_argument("--out", required=True)
+    real.add_argument("--json-out", default=None)
+    real.set_defaults(func=_cmd_real)
