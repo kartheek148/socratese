@@ -55,6 +55,8 @@ Memory artifacts have their own typed tables that mirror the capability tables a
 
 `policy_decisions.acted boolean NOT NULL DEFAULT true` (migration 0005): `false` marks a shadow decision that was recorded for evaluation and never executed; existing rows are `true`. The decision's `feature_snapshot` additionally carries the typed `DecisionFeatures` for adaptive policies (key `controller`) and a per-candidate `strategy` in the match snapshot. Run provenance, the verified outcome and the learning-plane join used for training are unchanged (`policy_decisions ⋈ run_outcomes`). Tenant scoping: every table has `tenant_id`; the registry, the decision log and `build_rollout` filter by it.
 
+Migration 0006 (M6.1) only replaces the CHECK on `controller_policies.kind` with `('COST_AWARE','BANDIT','EVIDENCE_DRIVEN')`. Paired validation priors and their provenance are part of the immutable JSON `definition` (and its hash): optional `snapshot.paired`, `snapshot.prior_sources` and `params.evidence`, omitted when empty so the stored hashes of earlier definitions do not change. Downgrading 0006 raises while an `EVIDENCE_DRIVEN` version exists (history is not rewritten).
+
 ## Schema changes in later milestones
 
 Planned per [fit/gap report §5](./milestone-0-fit-gap-report.md): `experience_cases` (M3), `capabilities*`/evaluation/rollout tables (M3–M4), `memory_items` (M7), `cost_ledger` (G8). Each ships with its own Alembic revision.

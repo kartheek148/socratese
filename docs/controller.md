@@ -1,6 +1,6 @@
 # Adaptive strategy controller (Milestone 6)
 
-The controller decides, per task, *which eligible action to run*: general planning, or one of the capabilities the matcher already admitted. It is a learning-plane artifact (a versioned, hashed policy) consumed by the execution plane; execution never waits for training and never reads live tables. Design, audit and the frozen protocol: [experiments/adaptive-controller-design.md](./experiments/adaptive-controller-design.md); results: [evaluations/adaptive-controller-report.md](./evaluations/adaptive-controller-report.md); ADR [0015](./decisions/0015-adaptive-controller-bounded-learning.md).
+The controller decides, per task, *which eligible action to run*: general planning, or one of the capabilities the matcher already admitted. It is a learning-plane artifact (a versioned, hashed policy) consumed by the execution plane; execution never waits for training and never reads live tables. Design, audit and the frozen protocol: [experiments/adaptive-controller-design.md](./experiments/adaptive-controller-design.md); results: [evaluations/adaptive-controller-report.md](./evaluations/adaptive-controller-report.md); ADR [0015](./decisions/0015-adaptive-controller-bounded-learning.md). The M6.1 evidence-driven extension (paired validation priors, bounded exploration) is described [below](#evidence-driven-controller-m61).
 
 ## Constraints are outside the learned policy
 
@@ -28,6 +28,7 @@ task ─► matcher (permissions, tenant, preconditions, budgets, ACTIVE-only)  
 | `fixed-general-planning/1`, `rule-capability/1` | unchanged baselines (the rule baseline is also the default action of every adaptive policy) |
 | `adaptive/N`, kind `COST_AWARE` | deterministic: deviates from the rule default only with enough verified evidence; never explores (probability 1.0) |
 | `adaptive/N`, kind `BANDIT` | cost-aware plus gated ε-greedy exploration; the exact distribution is logged (`estimates["pi:<action>"]`) and the uniform draw is a hash of the decision id, so a decision replays exactly |
+| `adaptive/N`, kind `EVIDENCE_DRIVEN` (M6.1) | paired validation priors where a cell has ≥30 paired tasks, evidence-driven exploration (bounded by the evidence requirement) elsewhere; `COST_AWARE` also accepts a paired prior when the evidence parameters are set |
 
 A policy version is an immutable `ControllerPolicyDefinition` (typed parameters + frozen estimator snapshot: per `(family, risk, action)` verified trials, successes, tokens; calibration summary; training provenance), identified by a content hash. Estimates use only **verified, acted** outcomes of the tenant; UNKNOWN and shadow (non-acted) decisions are excluded and counted.
 
@@ -53,6 +54,23 @@ A FAIL in the canary rolls the candidate back automatically (`ee-ctl evaluate ca
 
 The orchestrator can attach a **shadow** controller (`TaskOrchestrator(shadow=...)`): it decides alongside the acting one, its decision is stored with `acted=false` and never executed, and any exception in it is recorded as a `controller_shadow` error trace event without touching the run.
 
+## Evidence-driven controller (M6.1)
+
+Constant-ε exploration is paid in every regime (M6). M6.1 spends *validation* evidence instead. Details, protocol and results: [design](./experiments/evidence-driven-controller-design.md), [report](./evaluations/evidence-driven-controller-report.md), ADR [0016](./decisions/0016-evidence-driven-controller.md).
+
+* **Paired prior** (`controller/paired.py`, `controller/datasets.py:paired_tasks`): per `(family, risk, default, alternative)` a 2×2 table of the rule default and the alternative on the same held-out tasks, final outcome including the planner fallback (arms A and E; the promotion evaluator's capability-alone arm is *not* usable), with provenance (`PairedSource`). Held-out splits only; repetitions collapse by strict majority; UNKNOWN and tied tasks are dropped and counted; sources recorded under another runtime or verifier are refused unless `--allow-version-mismatch`.
+* **Decision** (`controller/evidence.py`, only when `evidence` parameters are set; otherwise the M6 rules run unchanged): with a paired cell of ≥ `n_min_pairs` (30) tasks the alternative replaces the rule default iff the Newcombe paired lower bound of `p_alt − p_default` is ≥ −δ and it saves ≥ `min_cost_saving` tokens per verified success; tokens never compensate a failed bound. Without a paired cell the M6 live rule applies and `EVIDENCE_DRIVEN` explores only while the alternative is unresolved, a saving is plausible and its sample target (≤ `explore_target_cap`) is not reached. Prior-backed cells never explore.
+* **Drift guard**: ≥ `drift_min_n` live outcomes that contradict the prior by more than δ (Wilson one-sided) invalidate it and the rule default returns. Coarse: it compares cumulative live evidence (slow under a sudden collapse, see the report).
+* **Unchanged**: protected risk classes and foreign tenants never read a prior; the stored M6 definition and snapshot hashes; `default-low`, `default-low-v2`, `serving-low-v1`.
+* Each decision records `tier_paired:<action>`, the bound (`lb:`/`ub:`), the evidence size, the cost ratio, `req_pairs` (paired tasks still needed) and any drift invalidation; replay verifies the paired views against the registered snapshot. The offline gate adds `prior_cells`, `prior_pairs`, `prior_validation_tokens` and FAILs priors without complete provenance.
+
+```
+uv run ee-ctl paired-run --portfolio heterogeneous --llm vertex --root PUB --private-root PRIV --out v.json   # held-out arms A and E (the prior source)
+uv run ee-ctl train      --kind evidence --paired-from v1.json v2.json --explore-families pool timeout       # CANDIDATE with a paired prior
+uv run ee-ctl prior-curve --prior v1.json v2.json --sizes 30 60 120 240                                      # how large must validation be?
+uv run ee-ctl simulate   --heldout NAME h1.json h2.json --prior v1.json v2.json --kinds bandit evidence+prior evidence   # offline, per-family cell verdicts
+```
+
 ## Commands
 
 ```
@@ -66,13 +84,14 @@ uv run ee-ctl live       --portfolio heterogeneous --root PUB --private-root PRI
 ```
 `paired-run` and `live` use hand-authored **stress fixtures** (`controller_fixtures.py`; a compiler-shaped capability and a *drifted* one whose target key is frozen to its original layout). They are validated through the normal DSL validator, held in memory, never registered or promoted, and every run is tagged experimental.
 
-## Schema (migration 0005)
+## Schema (migrations 0005, 0006)
 
-`controller_policies` (immutable definition + hash; only `state` changes, along the legal graph, with a trigger requiring stage evidence), `controller_policy_evaluations` and `controller_policy_transitions` (append-only), partial unique indexes for one ACTIVE/CANARY/SHADOW version per policy, and `policy_decisions.acted boolean NOT NULL DEFAULT true`. See [schema.md](./schema.md).
+`controller_policies` (immutable definition + hash; only `state` changes, along the legal graph, with a trigger requiring stage evidence), `controller_policy_evaluations` and `controller_policy_transitions` (append-only), partial unique indexes for one ACTIVE/CANARY/SHADOW version per policy, and `policy_decisions.acted boolean NOT NULL DEFAULT true`. Migration 0006 only widens the `kind` CHECK to include `EVIDENCE_DRIVEN` (paired priors live inside the JSON definition). See [schema.md](./schema.md).
 
 ## Limits
 
 * The estimator is tabular over `(family, risk, action)`; it cannot see within-family variant differences (a capability that is good on some layouts and bad on others averages out).
 * Non-inferiority at a 10-point margin needs on the order of 100+ verified trials per action; the learned controller is therefore conservative at benchmark scale and defers to the rule baseline until it has them.
-* Exploration costs successes and tokens; whether it pays back depends on the horizon (see the report).
+* Exploration costs successes and tokens; whether it pays back depends on the horizon (see the report). M6.1 removes most of it where a paired prior exists, but a prior needs several hundred paired validation tasks per cell to resolve a 10-point margin (smaller priors leave the rule in place) and is extra validation cost until promotion records the final-outcome arm.
+* The drift guard is slow after a sudden collapse of a prior-backed alternative; shadow/canary gating and rollback remain the protection.
 * `HUMAN_ESCALATION` is never selected by a learned policy; no cost model for humans exists.

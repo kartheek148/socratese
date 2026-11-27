@@ -142,6 +142,8 @@ Selection principle: minimize expected total cost subject to reliability, permis
 
 > **Milestone 6 implementation:** the adaptive controller (§4.4/§5.7) is implemented as a pure `controller/` package plus `ee-ctl`: rule baseline and feasibility layer outside the learned policy, tabular success/cost estimator from verified outcomes, prequential calibration, cost-aware and gated-bandit policies, replay and off-policy estimates, and an offline → shadow → canary → active registry with rollback and database-enforced evidence. See [controller.md](./controller.md) and [ADR 0015](./decisions/0015-adaptive-controller-bounded-learning.md).
 
+> **Milestone 6.1 implementation:** the estimator snapshot may carry paired validation priors (default vs alternative on the same held-out tasks, final outcome including the planner fallback) and the new `EVIDENCE_DRIVEN` kind explores only while an alternative's non-inferiority bound is unresolved; the rule baseline, protected classes and all M6 definition hashes are unchanged. See [controller.md](./controller.md), [ADR 0016](./decisions/0016-evidence-driven-controller.md) and [the report](./evaluations/evidence-driven-controller-report.md).
+
 ### 4.5 Agent runtime and tool gateway
 Support:
 - deterministic capability execution;
