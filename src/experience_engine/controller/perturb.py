@@ -56,8 +56,11 @@ class Perturbation:
     base_runtime: str = "rt-1"
 
     def apply(
-        self, i: int, family: str | None, success: bool, tokens: int
+        self, i: int, family: str | None, success: bool, tokens: int, draw: int | None = None
     ) -> tuple[bool, int, str]:
+        """`i` is the time position (which phase is active); `draw` (default `i`) indexes the
+        random numbers, so several independent observations can be taken at the same time."""
+        d = i if draw is None else draw
         runtime = self.base_runtime
         mult = 1.0
         for k, ph in enumerate(self.phases):
@@ -65,7 +68,7 @@ class Perturbation:
             if e <= 0.0:
                 continue
             surv = 1.0 - e * (1.0 - ph.survival)
-            if success and unit(self.seed_label, f"surv{k}", i) >= surv:
+            if success and unit(self.seed_label, f"surv{k}", d) >= surv:
                 success = False
             mult *= 1.0 + e * (ph.cost_mult - 1.0)
             if ph.runtime is not None:
@@ -73,13 +76,13 @@ class Perturbation:
         if self.noise_sd > 0.0:
             b = self.noise_sd * normal(self.seed_label, "blk", i // max(1, self.noise_block))
             p0 = self.noise_base_p
-            if b < 0 and success and unit(self.seed_label, "flip", i) < -b / p0:
+            if b < 0 and success and unit(self.seed_label, "flip", d) < -b / p0:
                 success = False
-            elif b > 0 and not success and unit(self.seed_label, "flip", i) < b / (1.0 - p0):
+            elif b > 0 and not success and unit(self.seed_label, "flip", d) < b / (1.0 - p0):
                 success = True
         if self.token_cv > 0.0:
             sigma = math.sqrt(math.log(1.0 + self.token_cv**2))
-            mult *= math.exp(sigma * normal(self.seed_label, "tok", i) - sigma * sigma / 2.0)
+            mult *= math.exp(sigma * normal(self.seed_label, "tok", d) - sigma * sigma / 2.0)
         return success, max(1, round(tokens * mult)), runtime
 
     def material(
@@ -92,5 +95,22 @@ class Perturbation:
                 continue
             drop = p_alt * e * (1.0 - ph.survival)
             if drop >= tol_success or e * (ph.cost_mult - 1.0) >= tol_cost or ph.runtime:
+                return True
+        return False
+
+    def degraded(
+        self, i: int, family: str | None, p_alt: float, tol_success: float, tol_cost: float
+    ) -> bool:
+        """Ground truth for revalidation: is the alternative's *performance* materially worse at
+        position i? Unlike `material`, a runtime relabelling alone is a structural change, not a
+        performance change."""
+        for ph in self.phases:
+            e = ph.effect(i, family)
+            if e <= 0.0:
+                continue
+            if (
+                p_alt * e * (1.0 - ph.survival) >= tol_success
+                or e * (ph.cost_mult - 1.0) >= tol_cost
+            ):
                 return True
         return False

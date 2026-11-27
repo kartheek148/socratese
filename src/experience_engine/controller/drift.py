@@ -524,6 +524,22 @@ class MonitorFleet:
         self.transitions.extend(new)
         return new
 
+    def restore(self, cell_key: str) -> None:
+        """Return a quarantined cell to NORMAL with empty windows (M6.3 revalidation only). The
+        transition sequence, the episode count and the observation counters are preserved, so a
+        relapse still counts toward `max_episodes`."""
+        st = self.states[cell_key]
+        self.states[cell_key] = MonitorState(
+            seq=st.seq, episode=st.episode, n_alt=st.n_alt, n_default=st.n_default,
+            n_unknown=st.n_unknown, n_ignored=st.n_ignored,
+        )  # fmt: skip
+
+    def replace_reference(self, ref: CellReference) -> None:
+        """Swap a cell's reference (a revalidation rebase); the stored prior is not edited."""
+        self.refs[ref.cell_key] = ref
+        ctx = (ref.family, ref.risk, ref.default_key)
+        self._by_ctx[ctx] = [ref if r.cell_key == ref.cell_key else r for r in self._by_ctx[ctx]]
+
     def overlay(self) -> DriftOverlay:
         return DriftOverlay(
             cells={

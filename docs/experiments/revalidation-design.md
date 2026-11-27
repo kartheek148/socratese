@@ -158,7 +158,8 @@ stopping with the same error targets. No Bayesian or adaptive policy is included
 
 `margin δ 0.10`, `alpha 0.05`, `alpha_severe 0.025` when severity ≥ `severe_drop 0.25` (severity =
 reference success − success at the DRIFTED transition; 0 when unavailable), `beta 0.20`,
-`dwell 50` (severe: ×2), `trials_per_round 10` (one trial per simulated hour), `max_trials 320`,
+`dwell 50` (severe: ×2), `trials_per_round 50` with `round_hours 10` (E2; originally 10), `max_trials 320`,
+`cost_futility_min_trials 15` and `cost_futility_confidence 0.95` (E1),
 `max_unverified_fraction 0.20` after `min_unverified_trials 10`, `max_cycles 3`,
 `max_cycle_hours 400`, `case_ttl_hours 500`, `cell_token_budget 3,000,000`, `min_pool 50`,
 `cost_guard 1.15`, `confirm_gap_hours 20`, `confirm_trials 20`, `confirm_alpha 0.01`,
@@ -183,7 +184,8 @@ Per cycle: `max_trials`, a token cap of `1.5 × max_trials × reference mean tok
 Per cell: `max_cycles`, `cell_token_budget`. Per round: `trials_per_round`. Exceeding the trial or
 token caps without a decision → BUDGET_EXHAUSTED; exceeding the time limits → EXPIRED.
 Wall-clock is measured in the experiment's simulated hours (decision i is at SIM_EPOCH + i hours;
-trial j of a round at the round's time + j hours); real executors report their own timestamps.
+trial j of a round at the round's time + j × `round_hours / trials_per_round`, see E2); real
+executors report their own timestamps.
 
 ## 7. Lineage (Phase 2.4, assumed completion)
 
@@ -271,7 +273,7 @@ reported as such.
 (paired across variants), exact binomial bounds for rates; no multiplicity correction is applied
 across the ten scenarios (descriptive per-scenario tables), the pre-registered criteria are the
 pooled ones above. Sensitivity runs (exploratory, development seeds only): `confirm_trials 0`
-ablation; `alpha 0.10`; `trials_per_round 20`. They cannot change the frozen configuration.
+ablation; `alpha 0.10`; `trials_per_round 10` (the pre-E2 throughput); `margin 0.15`. They cannot change the frozen configuration.
 
 **No threshold may be changed after the held-out run starts.** Calibration is not planned: every
 parameter above is derived from the M6.2 definitions or conventional error rates. A development
@@ -284,7 +286,41 @@ separately and never used to select anything.
 
 ## 10. Protocol corrections (before held-out data)
 
-*(empty at freeze)*
+Found by a **development smoke run** (seeds 110000–110002, 6 variants, all 10 scenarios; protocol
+defects only; no held-out seed was generated). Each correction applies to **all strategies
+equally** and was committed before any held-out data existed.
+
+* **E1 — cost futility.** The frozen cycle checked the cost guard only when the *success* criterion
+  was reached. In S4 (cost ×1.5) every cycle therefore ran to its full length (A: the whole 3M
+  lifetime budget, ≈ 300 trials) before failing on cost. A cost problem is visible in the first
+  ~15 trials (token CV 0.35 → a 1.5× cost is about four standard errors). Added: after
+  `cost_futility_min_trials = 15` counted trials a cycle fails with `CRITERIA_NOT_MET` ("cost
+  futility") when the one-sided 95 % *lower* bound of mean tokens exceeds `cost_guard × reference
+  mean`. It can only end a cycle earlier with a failure, so it cannot create a recovery or inflate
+  the false-recovery rate; it can raise the false-failure rate (≤ 5 % per cycle, only when cost is
+  genuinely about 15 % too high). It is a deliberate exception to A's "no peeking" because the
+  peeked endpoint (cost) can only veto. In the smoke run S4 cost dropped from 3.0M to 0.44M tokens
+  per stream with no change in outcome (no restoration).
+* **E2 — trial throughput.** The frozen clock mapped one trial to one simulated hour, so a
+  ≈ 200-trial test occupied ≈ 200 simulated hours of an 800-decision stream, and the smoke run
+  showed that almost no cycle could complete: the experiment would have measured the clock mapping,
+  not revalidation. The decision clock (one decision per hour) is itself an M6.2 modelling choice,
+  far slower than real task execution. Changed `trials_per_round` 10 → **50** and added
+  `round_hours = 10` (the learning-plane round length): trials of a round are spaced
+  `round_hours / trials_per_round` = 12 simulated minutes, so a 200-trial test takes about 4 rounds
+  (40 simulated hours). Token costs are unaffected. `trials_per_round = 10` (the frozen value)
+  remains an exploratory sensitivity setting (§9). The time-to-restoration results are bounded by
+  this assumption and are reported as such.
+
+Smoke-run observations that were **not** changed (they are consequences of the frozen design, not
+defects): (i) a cycle fails by chance in about a quarter of healthy worlds (exact power at the
+planned effect ≈ 0.73–0.80 given the reference's own sampling error; the reference is unbiased,
+mean 0.521 for a true 0.52); (ii) the truncated SPRT is inconclusive (BUDGET_EXHAUSTED) when the
+true success lies between p_bad and p_good, which costs ≈ 2M tokens; (iii) with α_severe the lifetime
+budget of 3M tokens fits about two cycles; (iv) A and B are identical wherever the default arm is
+healthy (they differ only in R3); (v) revalidation spends 0.4–2.7M tokens per stream, against a
+restored-decision benefit of ≈ 0.145 utility (≈ 2,900 tokens), so the economic criterion (e) is
+expected to be hard to meet; this was known from the audit's §8 arithmetic.
 
 ## 11. Outcome
 

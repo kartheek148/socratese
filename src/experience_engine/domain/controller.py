@@ -24,6 +24,7 @@ from pydantic import (
 from experience_engine.domain.decision import Strategy
 from experience_engine.domain.drift import DriftParams, DriftView
 from experience_engine.domain.outcome import OutcomeStatus
+from experience_engine.domain.revalidation import RevalidationParams
 
 FEATURE_SCHEMA_VERSION = 1
 CONTROLLER_KEY = "controller"  # feature_snapshot key holding `DecisionFeatures`
@@ -109,6 +110,8 @@ class ControllerParams(_F):
     evidence: EvidenceParams | None = None
     # M6.2 windowed drift monitor (needs the evidence module); omitted when None
     drift: DriftParams | None = None
+    # M6.3 controlled revalidation of quarantined cells (needs the drift monitor); omitted when None
+    revalidation: RevalidationParams | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_evidence(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -117,6 +120,8 @@ class ControllerParams(_F):
             data.pop("evidence", None)
         if self.drift is None:
             data.pop("drift", None)
+        if self.revalidation is None:
+            data.pop("revalidation", None)
         return data
 
     @field_validator("learned_risk_levels", "exploration_risk_levels", "exploration_families")
@@ -139,6 +144,8 @@ class ControllerParams(_F):
             raise ValueError("required_success is not supported with the evidence module")
         if self.drift is not None and self.evidence is None:
             raise ValueError("the drift monitor needs the evidence module")
+        if self.revalidation is not None and self.drift is None:
+            raise ValueError("revalidation needs the drift monitor")
         return self
 
 

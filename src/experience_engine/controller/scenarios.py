@@ -148,6 +148,10 @@ class Scenario:
     truth_is_drift: bool = True  # False: perturbed observations are luck, not a change of the world
     drifting_family: str | None = None  # ground-truth drift restricted to this family
     stale_from: int | None = None  # evidence is materially stale from this position on
+    # M6.3 (revalidation experiments); the defaults leave every M6.2 scenario unchanged
+    default_phases: tuple[Phase, ...] = ()  # perturbation of the rule default's outcomes
+    verifier_outage: tuple[int, int] | None = None  # revalidation verifier down over [a, b)
+    expect: str = ""  # "restore" | "hold": what a correct revalidation does
 
     def perturbation(self, seed: int) -> Perturbation:
         return Perturbation(
@@ -158,6 +162,29 @@ class Scenario:
             noise_base_p=self.families[0].p_alt,
             token_cv=self.token_cv,
         )
+
+    def default_perturbation(self, seed: int) -> Perturbation | None:
+        if not self.default_phases:
+            return None
+        return Perturbation(
+            action=CAP_KEY,
+            seed_label=f"{self.sid}-d-{seed}",
+            phases=self.default_phases,
+            noise_base_p=self.families[0].p_default,
+        )
+
+    def degraded_positions(
+        self, seed: int, tol_success: float = 0.10, tol_cost: float = 0.30
+    ) -> dict[str, list[bool]]:
+        """Ground truth for revalidation: is the alternative's *performance* materially worse at
+        position i (a runtime relabelling alone is structural, not a performance change)?"""
+        pt = self.perturbation(seed)
+        return {
+            fam.name: [
+                pt.degraded(i, fam.name, fam.p_alt, tol_success, tol_cost) for i in range(self.n)
+            ]
+            for fam in self.families
+        }
 
     def material_positions(
         self, seed: int, tol_success: float = 0.10, tol_cost: float = 0.30
@@ -220,6 +247,59 @@ SCENARIOS: dict[str, Scenario] = {
 }
 
 
+def _reval(base: Scenario, expect: str, **kw: object) -> Scenario:
+    from dataclasses import replace
+
+    return replace(base, expect=expect, **kw)  # type: ignore[arg-type]
+
+
+_S = SCENARIOS
+# M6.3 frozen scenarios (design §9). The M6.2 ones are reused unchanged apart from the label of
+# what a correct revalidation does.
+REVAL_SCENARIOS: dict[str, Scenario] = {
+    s.sid: s
+    for s in (
+        _reval(_S["S2"], "hold"),
+        _reval(_S["S4"], "hold"),
+        _reval(_S["S5"], "restore"),
+        _reval(_S["S8"], "restore"),
+        _reval(_S["S8b"], "restore"),
+        Scenario(
+            "R1",
+            "residual degradation",
+            phases=(Phase(ONSET, end=400, survival=0.35), Phase(400, survival=0.70)),
+            expect="hold",
+        ),
+        Scenario(
+            "R2",
+            "structural change and degradation",
+            phases=(Phase(ONSET, runtime="rt-2", survival=0.35),),
+            expect="hold",
+        ),
+        Scenario(
+            "R3",
+            "common-cause outage",
+            phases=(Phase(ONSET, end=400, survival=0.35),),
+            default_phases=(Phase(ONSET, end=400, survival=0.50),),
+            expect="restore",
+        ),
+        Scenario(
+            "R4",
+            "disturbance with a revalidation-verifier outage",
+            phases=(Phase(ONSET, end=400, survival=0.35),),
+            verifier_outage=(380, 600),
+            expect="restore",
+        ),
+        Scenario(
+            "R5",
+            "relapse after recovery",
+            phases=(Phase(ONSET, end=400, survival=0.35), Phase(550, survival=0.35)),
+            expect="restore",
+        ),
+    )
+}
+
+
 @dataclass(frozen=True)
 class Stream:
     scenario: Scenario
@@ -230,6 +310,8 @@ class Stream:
     perturbation: Perturbation
     material: dict[str, list[bool]] = field(default_factory=dict)
     verifier_label: str = SIM_VERIFIER
+    default_perturbation: Perturbation | None = None
+    degraded: dict[str, list[bool]] = field(default_factory=dict)
 
 
 def build_stream(scenario: Scenario, seed: int) -> Stream:
@@ -244,4 +326,6 @@ def build_stream(scenario: Scenario, seed: int) -> Stream:
         draws,
         scenario.perturbation(seed),
         scenario.material_positions(seed),
+        default_perturbation=scenario.default_perturbation(seed),
+        degraded=scenario.degraded_positions(seed),
     )

@@ -22,6 +22,7 @@ from experience_engine.controller.features import features_for
 from experience_engine.controller.paired import PairedPrior
 from experience_engine.controller.perturb import Perturbation
 from experience_engine.controller.policy import MODE_EXPLORE, MODE_PROBE, choose
+from experience_engine.controller.revalidation import RevalidationFleet, TrialSource
 from experience_engine.domain.controller import (
     CandidateFeature,
     ControllerKind,
@@ -32,6 +33,7 @@ from experience_engine.domain.controller import (
 )
 from experience_engine.domain.drift import DriftTransition
 from experience_engine.domain.outcome import OutcomeStatus
+from experience_engine.domain.revalidation import RevalTransition, RevalTrial
 from experience_engine.evaluation.task_stats import (
     CostUnit,
     cost_per_success_ratio,
@@ -92,6 +94,10 @@ class SimConfig:
     verifier_label: str = (
         SIM_VERIFIER  # version stamped on observations (real tables: the source's)
     )
+    # M6.3: synthetic perturbation of the rule default's observed outcomes (common-cause outages)
+    perturb_default: Perturbation | None = None
+    # M6.3: out-of-band revalidation trials (needs params.revalidation); None = no trials run
+    executor: TrialSource | None = None
 
 
 @dataclass(frozen=True)
@@ -179,6 +185,9 @@ class SimRun:
     steps: list[SimStep]
     transitions: list[DriftTransition] = field(default_factory=list)
     final_states: dict[str, str] = field(default_factory=dict)
+    reval_transitions: list[RevalTransition] = field(default_factory=list)
+    reval_trials: list[RevalTrial] = field(default_factory=list)
+    reval_tokens: int = 0
 
 
 def run_stream(
@@ -193,7 +202,8 @@ def run_stream(
     snap_hash = ""
     steps: list[SimStep] = []
     dp = cfg.params.drift
-    fleet: MonitorFleet | None = None
+    rp = cfg.params.revalidation
+    fleet: MonitorFleet | RevalidationFleet | None = None
     ingested = len(records)
     overlay = None
     for i, idx in enumerate(order):
@@ -210,9 +220,20 @@ def run_stream(
             snap_hash = snap.snapshot_hash()
             if dp is not None:
                 if fleet is None:
-                    fleet = MonitorFleet(references_from_snapshot(snap), dp, cfg.tenant_id)
+                    refs = references_from_snapshot(snap)
+                    fleet = (
+                        RevalidationFleet(refs, dp, rp, cfg.tenant_id)
+                        if rp is not None
+                        else MonitorFleet(refs, dp, cfg.tenant_id)
+                    )
                 fleet.ingest(records[ingested:])
                 ingested = len(records)
+                if isinstance(fleet, RevalidationFleet):
+                    fleet.step(
+                        cfg.executor,
+                        records[-1].decision_id if records else "",
+                        SIM_EPOCH + timedelta(hours=i),
+                    )
                 overlay = fleet.overlay()
         t = tasks[idx]
         f = features_for(
@@ -230,6 +251,14 @@ def run_stream(
         choice = choose(f, cfg.params)
         status, tokens = t.outcomes[choice.selected_key]
         d_status, d_tokens = t.outcomes[t.default_key]
+        pd = cfg.perturb_default
+        if pd is not None:
+            ok_d, d_tokens, _ = pd.apply(
+                i, t.family, d_status == OutcomeStatus.VERIFIED_SUCCESS, d_tokens
+            )
+            d_status = OutcomeStatus.VERIFIED_SUCCESS if ok_d else OutcomeStatus.FAILURE
+            if choice.selected_key == t.default_key:
+                status, tokens = d_status, d_tokens
         drift = cfg.drift
         if (
             drift is not None
@@ -285,11 +314,17 @@ def run_stream(
         )
     if fleet is not None:
         fleet.ingest(records[ingested:])
-    return SimRun(
+    monitor = fleet.monitor if isinstance(fleet, RevalidationFleet) else fleet
+    run = SimRun(
         steps,
-        list(fleet.transitions) if fleet is not None else [],
-        {k: s.state.value for k, s in fleet.states.items()} if fleet is not None else {},
+        list(monitor.transitions) if monitor is not None else [],
+        {k: s.state.value for k, s in monitor.states.items()} if monitor is not None else {},
     )
+    if isinstance(fleet, RevalidationFleet):
+        run.reval_transitions = list(fleet.transitions)
+        run.reval_trials = list(fleet.trials)
+        run.reval_tokens = sum(fleet.spent.values())
+    return run
 
 
 def run_sequence(
