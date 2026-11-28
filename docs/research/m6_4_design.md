@@ -2,6 +2,8 @@
 
 Status: **proposal for review. Nothing here is implemented, frozen or approved.** No code, migration, default or policy was changed to produce it; M6.1/M6.2/M6.3 behaviour is untouched; nothing was promoted; M7 was not started. Evidence base: [m6_4_audit.md](./m6_4_audit.md) (read it first; "A.x/B.x/C.x" below refer to its sections). **This design does not claim that M6.4 will improve utility.** M6.3's held-out result (net utility −29.7 versus M6.2) is context, not a mandate: a negative or inconclusive M6.4 outcome is an acceptable and fully reportable result, and §18–19 say when to stop.
 
+**Implementation notes (added after review; the proposal below is unchanged).** Phase 1 implemented §7 (outage protocol) and §8 (gates) as the opt-in foundation described in [m6_4_foundation.md](./m6_4_foundation.md); §13 of that document lists every difference from this proposal and why. Routing (§6), the economic gate (§9), relapse protection (§10) and the experiment (§12–§15) are **not implemented**.
+
 Items marked **[H]** are hypotheses to be tested, **[D]** are decisions requiring user review (collected in §20), **[P]** are proposed parameter values that would be frozen *before* any development data and may be revised only through pre-registered errata.
 
 ## 1. Audit findings (summary)

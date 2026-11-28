@@ -148,6 +148,8 @@ Selection principle: minimize expected total cost subject to reliability, permis
 
 > **Milestone 6.3 implementation:** a quarantined cell can be revalidated through bounded, independently verified, out-of-band trials (reason-aware eligibility gates, three comparable strategies, a candidate/confirmation stage, explicit trial/token/time budgets, lineage on every trial, append-only persisted evidence with exact replay) and returns to service only on persisted, replayable evidence. It runs in the learning plane, never executes a trial in SHADOW, never exposes users to the quarantined action, and leaves the M6.2 monitor and every earlier hash unchanged. See [controller.md](./controller.md), [ADR 0018](./decisions/0018-controlled-revalidation.md) and [the report](./evaluations/revalidation-report.md).
 
+> **Milestone 6.4 Phase 1 (foundation, opt-in):** an unavailable verifier, an infrastructure failure or an interrupted run is never capability evidence and never consumes a recovery cycle (outage circuit breaker with suspension, probes, a 120 h evidence window and a capped suspension); every trial carries explicit provenance (absent = unavailable); and a recovery requires a persisted, passing report of eleven fail-closed evidence gates, enforced from the case machine down to a database CHECK and reproduced exactly by replay. Routing, economics, probation and shadow execution are not part of this phase. See [research/m6_4_foundation.md](./research/m6_4_foundation.md).
+
 ### 4.5 Agent runtime and tool gateway
 Support:
 - deterministic capability execution;

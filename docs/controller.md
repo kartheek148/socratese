@@ -120,6 +120,10 @@ uv run ee-ctl reval-report --results heldout.json [--repro again.json] --out rep
 uv run ee-ctl reval-status | reval-evaluate | reval-replay --version N                # persisted cases, sync, verification
 uv run ee-ctl reval-real --prior m61-vt_*.json --root PUB --private-root PRIV --workers 8 --out case.json  # EXPLORATORY: one real-model case
 ```
+
+### Verification semantics and evidence eligibility (M6.4 Phase 1, opt-in)
+
+A revalidation configuration with a `recovery` block (`domain/recovery.py`, `controller/recovery_gates.py`) adds, without changing M6.3 for configurations that lack it: **seven outcome classes** (an attempt without a verdict — unavailable verifier, infrastructure failure, interrupted run — is budget spend, never evidence, never a lost cycle; a timeout states its origin), an **outage circuit breaker** (3 consecutive unavailable observations suspend collection; 2 consecutive healthy zero-token probes resume it; evidence stays usable for 120 h; cumulative suspension is capped at 500 h; the case and cycle clocks pause while suspended), per-trial **provenance** (absent = unavailable = failed), and **eleven fail-closed gates** whose persisted report must pass before any recovery — enforced by the case machine, the fleet, the service and a database CHECK, and reproduced exactly on replay. Frozen parameters, state machine, gate definitions, persistence and limitations: [research/m6_4_foundation.md](./research/m6_4_foundation.md).
 `reval-sim --horizon N` and `--set KEY=VALUE` / `--drift-set KEY=VALUE` are **exploratory** overrides for development seeds; the frozen configuration is the default.
 
 ## Commands
