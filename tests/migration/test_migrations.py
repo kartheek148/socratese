@@ -288,3 +288,200 @@ def test_0008_downgrades_cleanly_when_no_audit_rows_exist(scratch_database: str)
     migrate(scratch_database)
     assert "controller_revalidation_trials" in _tables(engine)
     engine.dispose()
+
+
+# ---- 0009: recovery evidence semantics (M6.4 Phase 1) --------------------------------------
+_RV_TRANSITION = (
+    "INSERT INTO controller_revalidation_transitions (transition_id, tenant_id, policy_id, "
+    "version, cell_key, episode, cycle, seq, from_state, to_state, trigger, reason, strategy, "
+    "measurements, detail, facts, rebase, {gates_col} n_trials, n_unverified, tokens_cycle, "
+    "anchor, params_hash, config, applied, log_version, created_at) VALUES (gen_random_uuid(), "
+    "'t', 'p', 1, 'c', 1, 0, :seq, :f, :to, :trig, 'PERFORMANCE_DEGRADATION', 'FIXED', '{{}}', "
+    "'[]', '{{}}', '{{}}', {gates_val} 0, 0, 0, 'a', :h, CAST(:cfg AS jsonb), true, "
+    "'revalidation/1', now())"
+)
+_RV_TRIAL = (
+    "INSERT INTO controller_revalidation_trials (trial_id, tenant_id, policy_id, version, "
+    "cell_key, episode, cycle, stage, ordinal, anchor, task_ref, verdict, tokens, {extra_cols} "
+    "observed_at, accepted, created_at) VALUES (gen_random_uuid(), 't', 'p', 1, 'c', 1, 0, "
+    "'EVIDENCE', :o, 'a', 'x', :verdict, 1, {extra_vals} now(), true, now())"
+)
+_PASSING = (
+    '{"eligible": true, "policy_version": "m6.4-gates-v1", "failed_gates": [], '
+    '"passed_gates": ["evidence_presence"], "evidence_ids": ["c|e1|c0|E0"], "config_hash": "h"}'
+)
+
+
+def _transition(
+    conn: sa.Connection,
+    seq: int,
+    to: str,
+    trig: str,
+    *,
+    gates: str | None,
+    config: str = "{}",
+    from_state: str | None = "RECOVERY_CANDIDATE",
+) -> None:
+    sql = _RV_TRANSITION.format(
+        gates_col="" if gates is None else "gates,",
+        gates_val="" if gates is None else "CAST(:g AS jsonb),",
+    )
+    params: dict[str, object] = {"seq": seq, "f": from_state, "to": to, "trig": trig, "h": "h",
+                                 "cfg": config}  # fmt: skip
+    if gates is not None:
+        params["g"] = gates
+    conn.execute(sa.text(sql), params)
+
+
+def _trial(conn: sa.Connection, o: int, verdict: str, *, origin: str | None = None,
+           provenance: str | None = None) -> None:  # fmt: skip
+    cols, vals, params = "", "", {"o": o, "verdict": verdict}
+    if origin is not None:
+        cols, vals = cols + "timeout_origin,", vals + ":origin,"
+        params["origin"] = origin
+    if provenance is not None:
+        cols, vals = cols + "provenance,", vals + "CAST(:prov AS jsonb),"
+        params["prov"] = provenance
+    conn.execute(sa.text(_RV_TRIAL.format(extra_cols=cols, extra_vals=vals)), params)
+
+
+def test_0009_widens_the_revalidation_tables_and_keeps_every_earlier_row_valid(
+    scratch_database: str,
+) -> None:
+    migrate(scratch_database, "0008")
+    engine = sa.create_engine(scratch_database)
+    with engine.begin() as conn:
+        _insert_policy(conn, "EVIDENCE_DRIVEN", 1)
+        _transition(conn, 1, "RECOVERED", "CONFIRMED", gates=None)  # an M6.3 restoration
+        _trial(conn, 0, "TIMEOUT")  # an M6.3 trial: no origin, no provenance
+    migrate(scratch_database)
+    cols = {c["name"] for c in inspect(engine).get_columns("controller_revalidation_transitions")}
+    assert "gates" in cols
+    trial_cols = {c["name"] for c in inspect(engine).get_columns("controller_revalidation_trials")}
+    assert {"timeout_origin", "provenance"} <= trial_cols
+    with engine.connect() as conn:  # the old rows are unchanged and carry explicit empty values
+        assert conn.execute(
+            sa.text("SELECT gates = '{}'::jsonb FROM controller_revalidation_transitions")
+        ).scalar_one()
+        row = conn.execute(
+            sa.text(
+                "SELECT timeout_origin, provenance = '{}'::jsonb "
+                "FROM controller_revalidation_trials"
+            )
+        ).one()
+        assert row == (None, True)
+    with engine.begin() as conn:  # the new vocabulary
+        _trial(conn, 1, "INFRASTRUCTURE_FAILURE", origin="INFRASTRUCTURE")
+        _trial(conn, 2, "INFRASTRUCTURE_FAILURE")
+        _trial(conn, 3, "EXECUTION_INCOMPLETE")
+        _trial(conn, 4, "TIMEOUT", origin="CAPABILITY", provenance='{"executor_id": "e"}')
+        _transition(conn, 2, "REVALIDATING", "SUSPENDED", gates=None, from_state="REVALIDATING")
+        for seq, trig in enumerate(("OUTAGE_PROBE", "RESUMED", "SUSPENSION_TIMEOUT",
+                                    "EVIDENCE_EXPIRED"), start=3):  # fmt: skip
+            _transition(conn, seq, "REVALIDATING", trig, gates=None, from_state="REVALIDATING")
+    for bad in (
+        lambda c: _trial(c, 10, "TIMEOUT", origin="INFRASTRUCTURE"),  # an infrastructure timeout
+        lambda c: _trial(c, 10, "INFRASTRUCTURE_FAILURE", origin="CAPABILITY"),
+        lambda c: _trial(c, 10, "SUCCESS", origin="CAPABILITY"),
+        lambda c: _trial(c, 10, "MAYBE"),
+        lambda c: _trial(c, 10, "SUCCESS", provenance="[]"),  # provenance is a document
+        lambda c: _transition(c, 10, "REVALIDATING", "TIMER_ELAPSED", gates=None),
+        lambda c: _transition(c, 10, "REVALIDATING", "SUSPENDED", gates="[]"),
+    ):
+        with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
+            bad(conn)
+    with pytest.raises(sa.exc.DBAPIError), engine.begin() as conn:  # still append-only
+        conn.execute(sa.text("UPDATE controller_revalidation_trials SET tokens = 2"))
+    engine.dispose()
+
+
+def test_0009_lets_the_database_itself_refuse_a_recovery_without_a_passing_gate_report(
+    scratch_database: str,
+) -> None:
+    migrate(scratch_database)
+    engine = sa.create_engine(scratch_database)
+    with engine.begin() as conn:
+        _insert_policy(conn, "EVIDENCE_DRIVEN", 1)
+    gated = '{"recovery": {"gates_version": "m6.4-gates-v1"}}'
+    passing = _PASSING
+    recovered = {"to": "RECOVERED", "trig": "CONFIRMED"}
+    refused = {
+        "no report": "{}",
+        "not eligible": passing.replace("true", "false"),
+        "a failed gate listed": passing.replace('"failed_gates": []', '"failed_gates": ["x"]'),
+        "no passed gate": passing.replace(
+            '"passed_gates": ["evidence_presence"]', '"passed_gates": []'
+        ),
+        "no evidence": passing.replace('"evidence_ids": ["c|e1|c0|E0"]', '"evidence_ids": []'),
+        "no policy version": passing.replace("m6.4-gates-v1", ""),
+        "another configuration": passing.replace('"config_hash": "h"', '"config_hash": "z"'),
+        "eligibility not stated": passing.replace('"eligible": true, ', ""),
+        "failed gates not a list": passing.replace('"failed_gates": []', '"failed_gates": "none"'),
+        "only a populated payload": '{"eligible": "true", "evidence": [1, 2, 3], "x": "y"}',
+    }
+    for gates in refused.values():
+        with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
+            _transition(conn, 1, gates=gates, config=gated, **recovered)  # type: ignore[arg-type]
+    with engine.begin() as conn:
+        _transition(conn, 1, gates=passing, config=gated, **recovered)  # type: ignore[arg-type]
+        # a policy without a recovery block keeps its M6.3 semantics: no report is required
+        _transition(conn, 2, gates="{}", config="{}", **recovered)  # type: ignore[arg-type]
+        # a gate failure must carry a report that says so
+        _transition(conn, 3, "QUARANTINED", "GATE_FAILED",
+                    gates=passing.replace("true", "false"), config=gated)  # fmt: skip
+    for gates in ("{}", passing):
+        with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
+            _transition(conn, 9, "QUARANTINED", "GATE_FAILED", gates=gates, config=gated)
+    engine.dispose()
+
+
+def test_0009_downgrades_cleanly_when_only_earlier_vocabulary_is_in_use(
+    scratch_database: str,
+) -> None:
+    migrate(scratch_database, "0008")
+    engine = sa.create_engine(scratch_database)
+    with engine.begin() as conn:
+        _insert_policy(conn, "EVIDENCE_DRIVEN", 1)
+        _transition(conn, 1, "RECOVERED", "CONFIRMED", gates=None)
+        _trial(conn, 0, "SUCCESS")
+    migrate(scratch_database)
+    downgrade(scratch_database, "0008")
+    cols = {c["name"] for c in inspect(engine).get_columns("controller_revalidation_transitions")}
+    assert "gates" not in cols
+    with engine.connect() as conn:  # nothing was lost
+        for table in ("controller_revalidation_transitions", "controller_revalidation_trials"):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {table}")).scalar_one() == 1
+    migrate(scratch_database)
+    assert "gates" in {c["name"] for c in inspect(engine).get_columns(
+        "controller_revalidation_transitions")}  # fmt: skip
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        lambda c: _trial(c, 5, "EXECUTION_INCOMPLETE"),
+        lambda c: _trial(c, 5, "SUCCESS", provenance='{"executor_id": "e"}'),
+        lambda c: _trial(c, 5, "INFRASTRUCTURE_FAILURE", origin="INFRASTRUCTURE"),
+        lambda c: _transition(c, 2, "REVALIDATING", "SUSPENDED", gates=None,
+                              from_state="REVALIDATING"),
+        lambda c: _transition(c, 2, "QUARANTINED", "GATE_FAILED",
+                              gates=_PASSING.replace("true", "false")),
+    ],
+    ids=["new verdict", "provenance", "timeout origin", "new trigger", "gate report"],
+)  # fmt: skip
+def test_0009_never_rewrites_history(scratch_database: str, write: object) -> None:
+    migrate(scratch_database)
+    engine = sa.create_engine(scratch_database)
+    with engine.begin() as conn:
+        _insert_policy(conn, "EVIDENCE_DRIVEN", 1)
+        write(conn)  # type: ignore[operator]
+    with pytest.raises(sa.exc.DBAPIError, match="not rewriting history"):
+        downgrade(scratch_database, "0008")
+    with engine.connect() as conn:  # the refused downgrade lost nothing
+        total = sum(
+            conn.execute(sa.text(f"SELECT count(*) FROM {t}")).scalar_one()
+            for t in ("controller_revalidation_transitions", "controller_revalidation_trials")
+        )
+    assert total == 1
+    engine.dispose()

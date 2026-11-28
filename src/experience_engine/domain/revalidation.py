@@ -13,7 +13,21 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
+
+from experience_engine.domain.recovery import (
+    OutcomeClass,
+    RecoveryPolicy,
+    TimeoutOrigin,
+    TrialProvenance,
+)
 
 REVALIDATION_VERSION = "revalidation/1"
 
@@ -59,6 +73,18 @@ class TrialVerdict(StrEnum):
     TIMEOUT = "TIMEOUT"
     INVALID_OUTPUT = "INVALID_OUTPUT"
     VERIFICATION_UNAVAILABLE = "VERIFICATION_UNAVAILABLE"
+    # M6.4: attempts that are never capability evidence (see `domain/recovery.py`)
+    INFRASTRUCTURE_FAILURE = "INFRASTRUCTURE_FAILURE"
+    EXECUTION_INCOMPLETE = "EXECUTION_INCOMPLETE"
+
+
+NON_EVIDENCE_VERDICTS = frozenset(
+    {
+        TrialVerdict.VERIFICATION_UNAVAILABLE,
+        TrialVerdict.INFRASTRUCTURE_FAILURE,
+        TrialVerdict.EXECUTION_INCOMPLETE,
+    }
+)
 
 
 class TrialStage(StrEnum):
@@ -90,6 +116,13 @@ class RevalTrigger(StrEnum):
     LIFETIME_BUDGET = "LIFETIME_BUDGET"
     TTL_EXPIRED = "TTL_EXPIRED"
     CYCLE_EXPIRED = "CYCLE_EXPIRED"
+    # M6.4 Phase 1 (only emitted by policies with a recovery block)
+    SUSPENDED = "SUSPENDED"  # the outage breaker opened: evidence collection stops
+    OUTAGE_PROBE = "OUTAGE_PROBE"  # a zero-token availability probe that changed the breaker
+    RESUMED = "RESUMED"  # enough consecutive healthy probes: collection continues
+    SUSPENSION_TIMEOUT = "SUSPENSION_TIMEOUT"  # cumulative suspension reached its maximum
+    EVIDENCE_EXPIRED = "EVIDENCE_EXPIRED"  # evidence left the freshness window: counters reset
+    GATE_FAILED = "GATE_FAILED"  # statistics met, but the evidence gates did not all pass
 
 
 class RevalidationParams(_F):
@@ -122,6 +155,16 @@ class RevalidationParams(_F):
     ready_default_min: int = Field(default=30, ge=1)
     ready_confidence: float = Field(default=0.90, gt=0.5, lt=1.0)
     lineage_mismatch_limit: int = Field(default=5, ge=1)
+    # M6.4 Phase 1: outage semantics and evidence gates; None = M6.3 behaviour. Omitted from the
+    # serialised form when None, so every M6.3 definition keeps its hash.
+    recovery: RecoveryPolicy | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_recovery(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.recovery is None:
+            data.pop("recovery", None)
+        return data
 
     @model_validator(mode="after")
     def _consistent(self) -> "RevalidationParams":
@@ -148,6 +191,35 @@ class ExecutorFacts(_F):
     verifier_version: str | None = None
     verification_available: bool = True
     pool: int = Field(default=0, ge=0)
+    # M6.4: what the executor attests about itself, and whether its infrastructure is healthy.
+    # `None` is *unavailable*; the recovery gates treat it as a failure.
+    infrastructure_available: bool = True
+    executor_id: str | None = None
+    model_id: str | None = None
+    model_version: str | None = None
+    tool_versions: dict[str, str] | None = None
+    verifier_id: str | None = None
+    verifier_independent: bool | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        """The persisted form. M6.4 fields at their default are left out, so facts recorded by
+        policies without a recovery block serialise exactly as they did under M6.3."""
+        data: dict[str, Any] = self.model_dump(mode="json")
+        for name, default in _FACTS_M64_DEFAULTS.items():
+            if data.get(name) == default:
+                data.pop(name, None)
+        return data
+
+
+_FACTS_M64_DEFAULTS: dict[str, Any] = {
+    "infrastructure_available": True,
+    "executor_id": None,
+    "model_id": None,
+    "model_version": None,
+    "tool_versions": None,
+    "verifier_id": None,
+    "verifier_independent": None,
+}
 
 
 class TrialKey(_F):
@@ -173,14 +245,55 @@ class TrialResult(_F):
     capability_ref: str | None = None
     latency_ms: int | None = Field(default=None, ge=0)
     tenant_id: str | None = None
+    # M6.4: who is responsible for a timeout, and what the executor attests about the trial
+    timeout_origin: TimeoutOrigin | None = None
+    provenance: TrialProvenance = Field(default_factory=TrialProvenance)
+
+    @model_validator(mode="after")
+    def _origin_matches_verdict(self) -> "TrialResult":
+        origin, verdict = self.timeout_origin, self.verdict
+        if origin is None:
+            return self
+        if verdict == TrialVerdict.TIMEOUT and origin == TimeoutOrigin.CAPABILITY:
+            return self
+        if (
+            verdict == TrialVerdict.INFRASTRUCTURE_FAILURE
+            and origin == TimeoutOrigin.INFRASTRUCTURE
+        ):
+            return self
+        raise ValueError(
+            "a timeout origin is CAPABILITY on a TIMEOUT or INFRASTRUCTURE on an "
+            "INFRASTRUCTURE_FAILURE (an infrastructure timeout is never capability evidence)"
+        )
 
     @property
     def counted(self) -> bool:
-        return self.verdict != TrialVerdict.VERIFICATION_UNAVAILABLE
+        """Evidence: the attempt enters the success statistics."""
+        return self.verdict not in NON_EVIDENCE_VERDICTS
 
     @property
     def success(self) -> bool:
         return self.verdict == TrialVerdict.SUCCESS
+
+    @property
+    def attributed(self) -> bool:
+        """A timeout states its origin (any other verdict needs none)."""
+        return self.verdict != TrialVerdict.TIMEOUT or self.timeout_origin is not None
+
+    @property
+    def outcome_class(self) -> OutcomeClass:
+        return _OUTCOME_OF[self.verdict]
+
+
+_OUTCOME_OF: dict[TrialVerdict, OutcomeClass] = {
+    TrialVerdict.SUCCESS: OutcomeClass.VERIFIED_SUCCESS,
+    TrialVerdict.FAILURE: OutcomeClass.VERIFIED_FAILURE,
+    TrialVerdict.TIMEOUT: OutcomeClass.CAPABILITY_TIMEOUT,
+    TrialVerdict.INVALID_OUTPUT: OutcomeClass.INVALID_OUTPUT,
+    TrialVerdict.VERIFICATION_UNAVAILABLE: OutcomeClass.VERIFICATION_UNAVAILABLE,
+    TrialVerdict.INFRASTRUCTURE_FAILURE: OutcomeClass.INFRASTRUCTURE_FAILURE,
+    TrialVerdict.EXECUTION_INCOMPLETE: OutcomeClass.EXECUTION_INCOMPLETE,
+}
 
 
 class RevalTrial(_F):
@@ -210,6 +323,7 @@ class RevalTransition(_F):
     detail: list[str] = Field(default_factory=list)
     facts: dict[str, Any] = Field(default_factory=dict)
     rebase: dict[str, str] = Field(default_factory=dict)
+    gates: dict[str, Any] = Field(default_factory=dict)  # M6.4: the persisted `GateReport`
     n_trials: int = Field(default=0, ge=0)
     n_unverified: int = Field(default=0, ge=0)
     tokens_cycle: int = Field(default=0, ge=0)

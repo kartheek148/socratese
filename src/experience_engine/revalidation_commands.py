@@ -234,10 +234,17 @@ def _definition(store: Any, args: argparse.Namespace) -> Any:
 def _print(ts: list[Any]) -> None:
     for t in ts:
         frm = t.from_state.value if t.from_state else "-"
+        gates = ""
+        if t.gates:  # M6.4: the persisted gate report behind a recovery or a refused one
+            failed = t.gates.get("failed_gates") or []
+            gates = (
+                f" gates={'ok' if t.gates.get('eligible') else 'FAILED:' + ','.join(failed)}"
+                f"[{t.gates.get('policy_version')}]"
+            )
         print(
             f"  #{t.seq} {frm}->{t.to_state.value} {t.trigger.value} reason={t.reason.value} "
             f"episode={t.episode} cycle={t.cycle} n={t.n_trials} unverified={t.n_unverified} "
-            f"tokens={t.tokens_cycle} applied={t.applied} {'; '.join(t.detail[:2])}"
+            f"tokens={t.tokens_cycle} applied={t.applied}{gates} {'; '.join(t.detail[:2])}"
         )
 
 
@@ -250,6 +257,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(
         f"{d.policy_version}: revalidation "
         f"{(rp.strategy.value + ' (config ' + rp.config_hash()[:12] + ')') if rp else 'none'}"
+        f"{(', ' + rp.recovery.gates_version + ' gates') if rp and rp.recovery else ''}"
         f"; {len(ts)} persisted transition(s), {len(trials)} trial(s) "
         f"({sum(1 for x in trials if not x.accepted)} rejected, "
         f"{sum(x.result.tokens for x in trials):,} tokens)"

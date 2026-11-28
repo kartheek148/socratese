@@ -15,6 +15,13 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from experience_engine.controller.drift import CellReference, MonitorFleet
+from experience_engine.controller.recovery_gates import (
+    GateContext,
+    RecoveryGateViolation,
+    admissibility_problems,
+    evaluate_gates,
+    preflight,
+)
 from experience_engine.domain.controller import DecisionOutcomeRecord, PairedCell
 from experience_engine.domain.drift import (
     Detector,
@@ -26,6 +33,7 @@ from experience_engine.domain.drift import (
     DriftTrigger,
 )
 from experience_engine.domain.outcome import OutcomeStatus, VerificationResult
+from experience_engine.domain.recovery import RecoveryPolicy
 from experience_engine.domain.revalidation import (
     TERMINAL_STATES,
     ExecutorFacts,
@@ -45,6 +53,9 @@ from experience_engine.domain.revalidation import (
 from experience_engine.domain.stats import newcombe_difference_bounds, normal_quantile
 
 _P_MIN, _P_MAX = 0.01, 0.99
+_OUTAGE_VERDICTS = frozenset(
+    {TrialVerdict.VERIFICATION_UNAVAILABLE, TrialVerdict.INFRASTRUCTURE_FAILURE}
+)
 
 
 # ---- reasons -----------------------------------------------------------------------------------
@@ -177,12 +188,19 @@ def sprt_step(p_bad: float, p_good: float, success: bool) -> float:
 # ---- verification ------------------------------------------------------------------------------
 def classify_run_outcome(
     status: OutcomeStatus, results: Sequence[VerificationResult], *, timed_out: bool = False,
-    invalid_output: bool = False,
+    invalid_output: bool = False, infrastructure_failed: bool = False, incomplete: bool = False,
 ) -> TrialVerdict:  # fmt: skip
     """Independent-verification mapping. A success needs VERIFIED_SUCCESS *and* every goal
     criterion explicitly passed; anything the verifier could not evaluate is unavailable, never a
-    success. The executor adapter, not free text, reports timeouts and invalid outputs."""
+    success. The executor adapter, not free text, reports timeouts, invalid outputs, infrastructure
+    failures (including infrastructure-caused timeouts, which are never `timed_out`) and runs that
+    never completed; the last two take precedence because the run says nothing about the
+    capability."""
     goals = [r for r in results if r.role == "goal"]
+    if incomplete:
+        return TrialVerdict.EXECUTION_INCOMPLETE
+    if infrastructure_failed:
+        return TrialVerdict.INFRASTRUCTURE_FAILURE
     if status == OutcomeStatus.UNKNOWN or any(r.passed is None for r in results):
         return TrialVerdict.VERIFICATION_UNAVAILABLE
     if timed_out:
@@ -255,6 +273,23 @@ class CaseState:
     c_n: int = 0
     c_k: int = 0
     c_unverified: int = 0
+    # M6.4 Phase 1 (inert without a recovery policy). Budget accounting (attempts, tokens by kind)
+    # is kept apart from evidence accounting (n, k, c_n, c_k).
+    suspended: bool = False
+    suspended_at: datetime | None = None
+    suspended_hours: float = 0.0  # cumulative, closed spells
+    outage_streak: int = 0
+    healthy_probes: int = 0
+    n_infra: int = 0
+    n_incomplete: int = 0
+    tokens_unverified: int = 0
+    tokens_infra: int = 0
+    tokens_incomplete: int = 0
+    tokens_rejected: int = 0
+    evidence_since: datetime | None = None
+    evidence_trials: tuple[RevalTrial, ...] = ()
+    execution_ids: frozenset[str] = frozenset()
+    expired_evidence: int = 0
 
 
 def required_dwell(params: RevalidationParams, case: CaseState) -> int:
@@ -321,6 +356,10 @@ def check_eligibility(
         gate("verification_available", facts.verification_available,
              "independent verification unavailable")  # fmt: skip
         gate("pool", facts.pool >= params.min_pool, f"{facts.pool} < {params.min_pool} tasks")
+        if params.recovery is not None:
+            gate("infrastructure_available", facts.infrastructure_available,
+                 "executor infrastructure unavailable")  # fmt: skip
+            reasons += preflight(params.recovery, ref.runtime_version, facts)
     if case.reason == QuarantineReason.VERIFICATION_FAILURE and (
         facts is None or not facts.verification_available
     ):
@@ -394,10 +433,12 @@ def step_case(
     spent = lifetime_spent
     p_bad, p_good = hypotheses(ref, params.margin)
     token_cap = int(1.5 * params.max_trials * ref.mean_tokens)
+    rec = params.recovery  # M6.4 Phase 1; None keeps the M6.3 semantics exactly
+    gated = rec is not None
 
     def move(to: RevalState, trig: RevalTrigger, meas: dict[str, float] | None = None,
              detail: Sequence[str] = (), rebase: dict[str, str] | None = None,
-             **upd: object) -> None:  # fmt: skip
+             gates: dict[str, Any] | None = None, **upd: object) -> None:  # fmt: skip
         nonlocal cur
         seq = cur.seq + 1
         m = {k: round(v, 6) for k, v in (meas or {}).items()}
@@ -414,8 +455,9 @@ def step_case(
                 strategy=params.strategy,
                 measurements=m,
                 detail=list(detail),
-                facts=facts.model_dump(mode="json") if facts is not None else {},
+                facts=facts.to_json() if facts is not None else {},
                 rebase=rebase or {},
+                gates=gates or {},
                 n_trials=cur.n,
                 n_unverified=cur.n_unverified,
                 tokens_cycle=cur.tokens_cycle,
@@ -427,9 +469,28 @@ def step_case(
         )
         cur = replace(cur, state=to, seq=seq, **upd)  # type: ignore[arg-type]
 
+    def accounting_meas() -> dict[str, float]:
+        """Budget accounting (every attempt) beside evidence accounting (n, k): kept apart."""
+        return {
+            "attempts_evidence_stage": float(cur.ordinal),
+            "attempts_confirmation": float(cur.c_ordinal),
+            "outage_streak": float(cur.outage_streak),
+            "healthy_probes": float(cur.healthy_probes),
+            "suspended": float(cur.suspended),
+            "suspended_hours": cur.suspended_hours,
+            "n_infra": float(cur.n_infra),
+            "n_incomplete": float(cur.n_incomplete),
+            "tokens_unverified": float(cur.tokens_unverified),
+            "tokens_infra": float(cur.tokens_infra),
+            "tokens_incomplete": float(cur.tokens_incomplete),
+            "tokens_rejected": float(cur.tokens_rejected),
+            "evidence_expiries": float(cur.expired_evidence),
+        }
+
     def evidence_meas() -> dict[str, float]:
         mean_tokens = cur.tokens_counted / cur.n if cur.n else 0.0
         return {
+            **(accounting_meas() if gated else {}),
             "p_ref": ref.p_alt, "p_bad": p_bad, "p_good": p_good, "alpha": cur.alpha,
             "beta": params.beta, "k": float(cur.k), "n": float(cur.n),
             "unverified": float(cur.n_unverified), "plan_n": float(cur.plan_n),
@@ -444,17 +505,30 @@ def step_case(
             "n": 0, "k": 0, "n_unverified": 0, "n_rejected": 0, "mismatches": 0,
             "tokens_cycle": 0, "tokens_counted": 0, "tokens_sq": 0.0, "llr": 0.0, "versions": None,
             "first_ordinal": None, "last_trial_at": None, "candidate_at": None, "c_ordinal": 0,
-            "c_n": 0, "c_k": 0, "c_unverified": 0, "plan_n": 0, "plan_k": 0, **extra,
+            "c_n": 0, "c_k": 0, "c_unverified": 0, "plan_n": 0, "plan_k": 0,
+            "outage_streak": 0, "healthy_probes": 0, "n_infra": 0, "n_incomplete": 0,
+            "tokens_unverified": 0, "tokens_infra": 0, "tokens_incomplete": 0, "tokens_rejected": 0,
+            "evidence_since": None, "evidence_trials": (), **extra,
         }  # fmt: skip
 
-    def fail_cycle(trig: RevalTrigger, detail: Sequence[str] = (), **extra: Any) -> None:
+    def fail_cycle(trig: RevalTrigger, detail: Sequence[str] = (),
+                   gates: dict[str, Any] | None = None, **extra: Any) -> None:  # fmt: skip
         meas = evidence_meas()
         nxt = cur.cycle + 1
         if nxt >= params.max_cycles:
             move(RevalState.BUDGET_EXHAUSTED, RevalTrigger.CYCLES_EXHAUSTED, meas,
-                 [trig.value, *detail], cycle=nxt, **reset_cycle(), **extra)  # fmt: skip
+                 [trig.value, *detail], gates=gates, cycle=nxt,
+                 **reset_cycle(), **extra)  # fmt: skip
         else:
-            move(RevalState.QUARANTINED, trig, meas, detail, cycle=nxt, **reset_cycle(), **extra)
+            move(RevalState.QUARANTINED, trig, meas, detail, gates=gates, cycle=nxt,
+                 **reset_cycle(), **extra)  # fmt: skip
+
+    def active_hours(anchor: datetime | None) -> float | None:
+        """Elapsed hours since `anchor`, not counting the spell currently suspended."""
+        h = _hours(anchor, now)
+        if h is not None and cur.suspended:
+            h -= max(0.0, _hours(cur.suspended_at, now) or 0.0)
+        return h
 
     def lifetime_exhausted() -> bool:
         return spent >= params.cell_token_budget
@@ -462,12 +536,20 @@ def step_case(
     # ---- terminal / expiry ----
     if cur.state in TERMINAL_STATES:
         return out
-    age = _hours(cur.opened_at, now)
+    age = active_hours(cur.opened_at)
     if age is not None and age > params.case_ttl_hours:
         move(RevalState.EXPIRED, RevalTrigger.TTL_EXPIRED, {"age_hours": age})
         out.case = cur
         return out
-    cycle_age = _hours(cur.cycle_started_at, now)
+    if rec is not None and cur.suspended:
+        total = cur.suspended_hours + max(0.0, _hours(cur.suspended_at, now) or 0.0)
+        if total > rec.max_suspension_hours:
+            move(RevalState.EXPIRED, RevalTrigger.SUSPENSION_TIMEOUT,
+                 {**evidence_meas(), "suspended_total_hours": total},
+                 ["the verification path stayed down; the prior stays disabled"])  # fmt: skip
+            out.case = cur
+            return out
+    cycle_age = active_hours(cur.cycle_started_at)
     if (
         cur.state in (RevalState.REVALIDATING, RevalState.RECOVERY_CANDIDATE)
         and cycle_age is not None
@@ -525,9 +607,105 @@ def step_case(
         out.case = cur
         return out
 
+    def suspend(why: str, streak: int) -> None:
+        move(cur.state, RevalTrigger.SUSPENDED,
+             {**evidence_meas(), "outage_streak": float(streak), "suspended": 1.0},
+             [why], suspended=True, suspended_at=now, outage_streak=streak,
+             healthy_probes=0)  # fmt: skip
+
+    # ---- M6.4 Phase 1: outage breaker, evidence window, availability ----
+    # Decisions are taken at the end of the round, the latest instant its evidence can carry.
+    round_end = now + timedelta(hours=params.round_hours) if now is not None else None
+
+    def confirmed() -> int:
+        """Confirmation trials that count: evidence only under M6.4, every attempt under M6.3."""
+        return cur.c_n if gated else cur.c_n + cur.c_unverified
+
+    def gate_context(policy: RecoveryPolicy) -> GateContext:
+        return GateContext(
+            policy=policy, tenant_id=tenant_id, cell_key=cur.cell_key, episode=cur.episode,
+            cycle=cur.cycle, family=ref.family, risk=ref.risk, alt_key=ref.alt_key,
+            ref_runtime=ref.runtime_version, trigger_at=cur.trigger_at, decision_at=round_end,
+            config_hash=params.config_hash(), confirm_required=params.confirm_trials,
+        )  # fmt: skip
+
+    if rec is not None and cur.state in (RevalState.REVALIDATING, RevalState.RECOVERY_CANDIDATE):
+        healthy = (
+            facts is not None and facts.verification_available and facts.infrastructure_available
+        )
+        if cur.suspended:
+            if facts is None or not healthy:
+                if cur.healthy_probes > 0:
+                    move(cur.state, RevalTrigger.OUTAGE_PROBE,
+                         {**evidence_meas(), "healthy": 0.0, "healthy_probes": 0.0},
+                         ["probe unhealthy: resume count restarts"], healthy_probes=0)  # fmt: skip
+                out.case = cur
+                return out
+            probes = cur.healthy_probes + 1
+            if probes < rec.resume_probes:
+                move(cur.state, RevalTrigger.OUTAGE_PROBE,
+                     {**evidence_meas(), "healthy": 1.0, "healthy_probes": float(probes)},
+                     [f"healthy probe {probes}/{rec.resume_probes}"],
+                     healthy_probes=probes)  # fmt: skip
+                out.case = cur
+                return out
+            spell = max(0.0, _hours(cur.suspended_at, now) or 0.0)
+            shift = timedelta(hours=spell)
+            move(cur.state, RevalTrigger.RESUMED,
+                 {**evidence_meas(), "healthy": 1.0, "healthy_probes": float(probes),
+                  "suspended": 0.0, "spell_hours": spell,
+                  "suspended_hours": cur.suspended_hours + spell},
+                 [f"{probes} consecutive healthy probes; {spell:g} h of suspension"],
+                 suspended=False, suspended_at=None, suspended_hours=cur.suspended_hours + spell,
+                 healthy_probes=0, outage_streak=0,
+                 opened_at=cur.opened_at + shift if cur.opened_at is not None else None,
+                 cycle_started_at=(
+                     cur.cycle_started_at + shift if cur.cycle_started_at is not None else None
+                 ))  # fmt: skip
+        if cur.evidence_since is not None and round_end is not None:
+            held = _hours(cur.evidence_since, round_end)
+            if held is not None and held > rec.evidence_window_hours:
+                move(RevalState.REVALIDATING, RevalTrigger.EVIDENCE_EXPIRED,
+                     {**evidence_meas(), "evidence_age_hours": held},
+                     ["evidence left the freshness window; counters reset, no cycle consumed"],
+                     n=0, k=0, llr=0.0, tokens_counted=0, tokens_sq=0.0, c_n=0, c_k=0,
+                     c_unverified=0, candidate_at=None, evidence_trials=(), evidence_since=None,
+                     first_ordinal=None, last_trial_at=None,
+                     expired_evidence=cur.expired_evidence + 1)  # fmt: skip
+        if facts is not None and not healthy:
+            streak = cur.outage_streak + 1
+            if streak >= rec.outage_threshold:
+                suspend(f"{streak} consecutive unavailable observations (probe)", streak)
+            else:
+                move(cur.state, RevalTrigger.OUTAGE_PROBE,
+                     {**evidence_meas(), "healthy": 0.0, "outage_streak": float(streak)},
+                     ["probe unhealthy: nothing is spent"], outage_streak=streak)  # fmt: skip
+            out.case = cur
+            return out
+        if facts is not None and cur.outage_streak > 0:
+            move(cur.state, RevalTrigger.OUTAGE_PROBE,
+                 {**evidence_meas(), "healthy": 1.0, "outage_streak": 0.0},
+                 ["probe healthy: streak cleared"], outage_streak=0)  # fmt: skip
+
     # ---- trials ----
     j = 0
     spacing = params.round_hours / params.trials_per_round
+
+    def non_evidence(res: TrialResult, stage: TrialStage) -> dict[str, object]:
+        """Ledger of an accepted attempt that is not evidence: its resources are accounted for,
+        its outcome changes no success statistic."""
+        if res.verdict == TrialVerdict.INFRASTRUCTURE_FAILURE:
+            return {"n_infra": cur.n_infra + 1, "tokens_infra": cur.tokens_infra + res.tokens}
+        if res.verdict == TrialVerdict.EXECUTION_INCOMPLETE:
+            return {
+                "n_incomplete": cur.n_incomplete + 1,
+                "tokens_incomplete": cur.tokens_incomplete + res.tokens,
+            }
+        field = "n_unverified" if stage == TrialStage.EVIDENCE else "c_unverified"
+        return {
+            field: getattr(cur, field) + 1,
+            "tokens_unverified": cur.tokens_unverified + res.tokens,
+        }
 
     def run_one(stage: TrialStage) -> tuple[TrialResult, bool, RejectReason | None] | None:
         nonlocal cur, spent, j
@@ -544,7 +722,11 @@ def step_case(
             reject = RejectReason.TENANT_MISMATCH
         elif cur.trigger_at is not None and res.observed_at <= cur.trigger_at:
             reject = RejectReason.NOT_NEWER
-        elif res.task_ref in cur.task_refs:
+        elif res.task_ref in cur.task_refs or (
+            gated
+            and res.provenance.execution_id is not None
+            and res.provenance.execution_id in cur.execution_ids
+        ):
             reject = RejectReason.DUPLICATE
         elif (
             cur.reason != QuarantineReason.STRUCTURAL_INVALIDATION
@@ -556,16 +738,15 @@ def step_case(
             )
         ):
             reject = RejectReason.VERSION_MISMATCH
-        out.trials.append(
-            RevalTrial(
-                key=key,
-                result=res,
-                anchor=anchor,
-                round_at=now,
-                accepted=reject is None,
-                reject_reason=reject,
-            )
+        trial = RevalTrial(
+            key=key,
+            result=res,
+            anchor=anchor,
+            round_at=now,
+            accepted=reject is None,
+            reject_reason=reject,
         )
+        out.trials.append(trial)
         out.tokens += res.tokens
         spent += res.tokens
         upd: dict[str, object] = {"tokens_cycle": cur.tokens_cycle + res.tokens}
@@ -576,24 +757,47 @@ def step_case(
         else:
             upd["c_ordinal"] = ordinal + 1
         if reject is None:
-            upd["task_refs"] = cur.task_refs | {res.task_ref}
+            if gated:
+                # a task is consumed only by evidence: an attempt that was unavailable,
+                # infrastructure-failed or interrupted may be tried again
+                if res.counted:
+                    upd["task_refs"] = cur.task_refs | {res.task_ref}
+                if res.provenance.execution_id is not None:
+                    upd["execution_ids"] = cur.execution_ids | {res.provenance.execution_id}
+            else:
+                upd["task_refs"] = cur.task_refs | {res.task_ref}
             upd["last_trial_at"] = res.observed_at
             if cur.versions is None and cur.reason == QuarantineReason.STRUCTURAL_INVALIDATION:
                 upd["versions"] = (res.runtime_version, res.verifier_version)
+            if res.counted and gated:
+                upd["evidence_trials"] = (*cur.evidence_trials, trial)
+                if stage == TrialStage.EVIDENCE and cur.evidence_since is None:
+                    upd["evidence_since"] = res.observed_at
             if stage == TrialStage.EVIDENCE:
                 if res.counted:
                     upd.update(n=cur.n + 1, k=cur.k + int(res.success),
                                tokens_counted=cur.tokens_counted + res.tokens,
                                tokens_sq=cur.tokens_sq + float(res.tokens) ** 2)  # fmt: skip
                     upd["llr"] = cur.llr + sprt_step(p_bad, p_good, res.success)
+                elif gated:
+                    upd.update(non_evidence(res, stage))
                 else:
                     upd["n_unverified"] = cur.n_unverified + 1
             elif res.counted:
                 upd.update(c_n=cur.c_n + 1, c_k=cur.c_k + int(res.success))
+            elif gated:
+                upd.update(non_evidence(res, stage))
             else:
                 upd["c_unverified"] = cur.c_unverified + 1
+            if gated:  # the breaker watches consecutive unavailable attempts
+                if res.verdict in _OUTAGE_VERDICTS:
+                    upd["outage_streak"] = cur.outage_streak + 1
+                elif res.counted:
+                    upd["outage_streak"] = 0
         else:
             upd["n_rejected"] = cur.n_rejected + 1
+            if gated:
+                upd["tokens_rejected"] = cur.tokens_rejected + res.tokens
             if reject == RejectReason.VERSION_MISMATCH:
                 upd["mismatches"] = cur.mismatches + 1
         cur = replace(cur, **upd)  # type: ignore[arg-type]
@@ -614,9 +818,15 @@ def step_case(
             got = run_one(TrialStage.EVIDENCE)
             if got is None:
                 break
+            if rec is not None and cur.outage_streak >= rec.outage_threshold:
+                suspend(
+                    f"{cur.outage_streak} consecutive attempts without a verdict", cur.outage_streak
+                )
+                break
             total = cur.n + cur.n_unverified
             if (
-                total >= params.min_unverified_trials
+                not gated
+                and total >= params.min_unverified_trials
                 and cur.n_unverified / total > params.max_unverified_fraction
             ):
                 fail_cycle(RevalTrigger.VERIFICATION_UNAVAILABLE,
@@ -627,6 +837,8 @@ def step_case(
                            [f"{cur.mismatches} trials reported versions that do not match"],
                            reason=QuarantineReason.STRUCTURAL_INVALIDATION)  # fmt: skip
                 break
+            if gated and not (got[0].counted and got[1]):
+                continue  # nothing was learned from this attempt: no statistic can have changed
             mean = cur.tokens_counted / cur.n if cur.n else 0.0
             if cur.n >= params.cost_futility_min_trials:
                 # a cost problem is visible long before the success test can finish; stopping on
@@ -664,19 +876,26 @@ def step_case(
             while (
                 params.confirm_trials > 0
                 and j < params.trials_per_round
-                and (cur.c_n + cur.c_unverified < params.confirm_trials)
+                and (confirmed() < params.confirm_trials)
             ):
                 if lifetime_exhausted():
                     move(RevalState.BUDGET_EXHAUSTED, RevalTrigger.LIFETIME_BUDGET, evidence_meas())
                     break
+                if gated and cur.c_ordinal >= params.max_trials:
+                    move(RevalState.BUDGET_EXHAUSTED, RevalTrigger.TRIAL_CAP, evidence_meas())
+                    break
                 if run_one(TrialStage.CONFIRMATION) is None:
+                    break
+                if rec is not None and cur.outage_streak >= rec.outage_threshold:
+                    suspend(f"{cur.outage_streak} consecutive attempts without a verdict",
+                            cur.outage_streak)  # fmt: skip
                     break
                 if cur.mismatches >= params.lineage_mismatch_limit:
                     fail_cycle(RevalTrigger.LINEAGE_VIOLATION, ["confirmation versions mismatch"],
                                reason=QuarantineReason.STRUCTURAL_INVALIDATION)  # fmt: skip
                     break
             if cur.state == RevalState.RECOVERY_CANDIDATE and (
-                params.confirm_trials == 0 or cur.c_n + cur.c_unverified >= params.confirm_trials
+                params.confirm_trials == 0 or confirmed() >= params.confirm_trials
             ):
                 total = cur.c_n + cur.c_unverified
                 meas = {
@@ -685,7 +904,11 @@ def step_case(
                     "confirm_k": float(cur.c_k),
                     "confirm_unverified": float(cur.c_unverified),
                 }
-                if total and cur.c_unverified / total > params.max_unverified_fraction:
+                if (
+                    not gated
+                    and total
+                    and cur.c_unverified / total > params.max_unverified_fraction
+                ):
                     fail_cycle(RevalTrigger.VERIFICATION_UNAVAILABLE, ["confirmation unverified"])
                 elif cur.c_n and binom_cdf(cur.c_k, cur.c_n, p_bad) <= params.confirm_alpha:
                     meas["confirm_tail"] = binom_cdf(cur.c_k, cur.c_n, p_bad)
@@ -699,8 +922,20 @@ def step_case(
                         }
                     elif cur.reason == QuarantineReason.EVIDENCE_STALE and cur.last_trial_at:
                         rebase = {"recorded_at": cur.last_trial_at.isoformat()}
-                    move(RevalState.RECOVERED, RevalTrigger.CONFIRMED, meas, rebase=rebase)
-                    out.restored = out.transitions[-1]
+                    if rec is None:
+                        move(RevalState.RECOVERED, RevalTrigger.CONFIRMED, meas, rebase=rebase)
+                        out.restored = out.transitions[-1]
+                    else:
+                        report = evaluate_gates(gate_context(rec), cur.evidence_trials)
+                        payload = report.model_dump(mode="json")
+                        if report.eligible:
+                            move(RevalState.RECOVERED, RevalTrigger.CONFIRMED, meas,
+                                 rebase=rebase, gates=payload)  # fmt: skip
+                            out.restored = out.transitions[-1]
+                        else:
+                            fail_cycle(RevalTrigger.GATE_FAILED,
+                                       [f"gate:{g}" for g in report.failed_gates],
+                                       gates=payload)  # fmt: skip
     out.case = cur
     return out
 
@@ -822,6 +1057,12 @@ class RevalidationFleet:
                 source=source, facts=facts, lifetime_spent=self.spent.get(cell, 0), anchor=anchor,
                 now=now, applied=self.execute,
             )  # fmt: skip
+            if res.restored is not None:  # checked before anything is applied or recorded
+                problems = admissibility_problems(
+                    self.params.recovery, self.params.config_hash(), res.restored.gates
+                )
+                if problems:  # unreachable through step_case; guards every other producer
+                    raise RecoveryGateViolation(f"{cell}: {'; '.join(problems)}")
             self.cases[cell] = res.case
             self.spent[cell] = self.spent.get(cell, 0) + res.tokens
             self.trials.extend(res.trials)
@@ -885,6 +1126,8 @@ class ReplaySource:
                 )
 
     def facts(self, ref: CellReference, now: datetime) -> ExecutorFacts:
+        """The facts observed at this round when a transition recorded them (every availability
+        observation that changed a case does), else the latest recorded before it."""
         known = [f for at, f in self._facts.get(ref.cell_key, []) if at <= now]
         return known[-1] if known else ExecutorFacts(tenant_id=self._tenant)
 

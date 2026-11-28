@@ -818,6 +818,13 @@ REVAL_TRIGGERS = (
     "LIFETIME_BUDGET",
     "TTL_EXPIRED",
     "CYCLE_EXPIRED",
+    # M6.4 Phase 1
+    "SUSPENDED",
+    "OUTAGE_PROBE",
+    "RESUMED",
+    "SUSPENSION_TIMEOUT",
+    "EVIDENCE_EXPIRED",
+    "GATE_FAILED",
 )
 REVAL_REASONS = (
     "STATISTICAL_DRIFT",
@@ -835,12 +842,41 @@ TRIAL_VERDICTS = (
     "TIMEOUT",
     "INVALID_OUTPUT",
     "VERIFICATION_UNAVAILABLE",
+    # M6.4 Phase 1
+    "INFRASTRUCTURE_FAILURE",
+    "EXECUTION_INCOMPLETE",
 )
 REJECT_REASONS = ("NOT_NEWER", "TENANT_MISMATCH", "DUPLICATE", "VERSION_MISMATCH")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
     return f"{column} IN (" + ",".join(f"'{x}'" for x in values) + ")"
+
+
+# A recovery under a policy that carries a recovery block must have been authorised by a passing,
+# complete gate evaluation: the stored report must say eligible, list no failed gate, list passed
+# gates, name its evidence and policy version, and have been produced under this very
+# configuration. A merely non-null JSON payload does not satisfy it.
+GATES_AUTHORISE_RECOVERY = (
+    "to_state <> 'RECOVERED' OR (config -> 'recovery') IS NULL OR "
+    "CASE WHEN jsonb_typeof(gates -> 'failed_gates') = 'array' "
+    "AND jsonb_typeof(gates -> 'passed_gates') = 'array' "
+    "AND jsonb_typeof(gates -> 'evidence_ids') = 'array' "
+    "THEN coalesce(gates ->> 'eligible', '') = 'true' "
+    "AND coalesce(gates ->> 'policy_version', '') <> '' "
+    "AND jsonb_array_length(gates -> 'failed_gates') = 0 "
+    "AND jsonb_array_length(gates -> 'passed_gates') > 0 "
+    "AND jsonb_array_length(gates -> 'evidence_ids') > 0 "
+    "AND coalesce(gates ->> 'config_hash', '') = params_hash "
+    "ELSE false END"
+)
+GATE_FAILED_IS_NOT_ELIGIBLE = (
+    "trigger <> 'GATE_FAILED' OR coalesce(gates ->> 'eligible', '') = 'false'"
+)
+TIMEOUT_ORIGIN_MATCHES_VERDICT = (
+    "timeout_origin IS NULL OR (verdict = 'TIMEOUT' AND timeout_origin = 'CAPABILITY') "
+    "OR (verdict = 'INFRASTRUCTURE_FAILURE' AND timeout_origin = 'INFRASTRUCTURE')"
+)
 
 
 controller_revalidation_transitions = sa.Table(
@@ -863,6 +899,7 @@ controller_revalidation_transitions = sa.Table(
     sa.Column("detail", JSONB, nullable=False),
     sa.Column("facts", JSONB, nullable=False),
     sa.Column("rebase", JSONB, nullable=False),
+    sa.Column("gates", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("n_trials", sa.Integer, nullable=False),
     sa.Column("n_unverified", sa.Integer, nullable=False),
     sa.Column("tokens_cycle", sa.Integer, nullable=False),
@@ -883,6 +920,9 @@ controller_revalidation_transitions = sa.Table(
     sa.CheckConstraint(_in("reason", REVAL_REASONS), name="reason"),
     sa.CheckConstraint(_in("strategy", REVAL_STRATEGIES), name="strategy"),
     sa.CheckConstraint("seq >= 1", name="seq_positive"),
+    sa.CheckConstraint("jsonb_typeof(gates) = 'object'", name="gates_object"),
+    sa.CheckConstraint(GATES_AUTHORISE_RECOVERY, name="recovery_needs_passing_gates"),
+    sa.CheckConstraint(GATE_FAILED_IS_NOT_ELIGIBLE, name="gate_failed_not_eligible"),
     sa.Index("ix_controller_revalidation_transitions_version", "tenant_id", "policy_id", "version"),
 )
 
@@ -908,6 +948,8 @@ controller_revalidation_trials = sa.Table(
     sa.Column("verifier_version", sa.Text),
     sa.Column("capability_ref", sa.Text),
     sa.Column("result_tenant_id", sa.Text),
+    sa.Column("timeout_origin", sa.Text),
+    sa.Column("provenance", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
     sa.Column("observed_at", _ts(), nullable=False),
     sa.Column("accepted", sa.Boolean, nullable=False),
     sa.Column("reject_reason", sa.Text),
@@ -926,5 +968,7 @@ controller_revalidation_trials = sa.Table(
         name="accepted_consistent",
     ),
     sa.CheckConstraint("tokens >= 0", name="tokens_nonnegative"),
+    sa.CheckConstraint(TIMEOUT_ORIGIN_MATCHES_VERDICT, name="timeout_origin_matches_verdict"),
+    sa.CheckConstraint("jsonb_typeof(provenance) = 'object'", name="provenance_object"),
     sa.Index("ix_controller_revalidation_trials_version", "tenant_id", "policy_id", "version"),
 )

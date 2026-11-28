@@ -20,6 +20,10 @@ from experience_engine.controller.drift_service import (
     SyncResult,
     verify_prefix,
 )
+from experience_engine.controller.recovery_gates import (
+    RecoveryGateViolation,
+    admissibility_problems,
+)
 from experience_engine.controller.revalidation import (
     RevalidationFleet,
     TrialSource,
@@ -27,7 +31,7 @@ from experience_engine.controller.revalidation import (
 )
 from experience_engine.domain.controller import ControllerPolicyDefinition, DecisionOutcomeRecord
 from experience_engine.domain.drift import DriftMode, DriftOverlay
-from experience_engine.domain.revalidation import RevalTransition, RevalTrial
+from experience_engine.domain.revalidation import RevalState, RevalTransition, RevalTrial
 from experience_engine.ports.drift_log import DriftLog
 from experience_engine.ports.revalidation_log import RevalidationLog
 
@@ -144,6 +148,11 @@ class RevalidationService:
         t, p, v = definition.tenant_id, definition.policy_id, definition.version
         rp, dp = definition.params.revalidation, definition.params.drift
         assert rp is not None and dp is not None
+        for tr in new_t:  # defence in depth: the database checks this too
+            if tr.to_state == RevalState.RECOVERED:
+                problems = admissibility_problems(rp.recovery, rp.config_hash(), tr.gates)
+                if problems:
+                    raise RecoveryGateViolation(f"{tr.cell_key}: {'; '.join(problems)}")
         now = self._now()
         drift_new = verify_prefix(self._drift_log.transitions(t, p, v), fleet.monitor.transitions)
         self._log.append(t, p, v, new_t, new_trials, now, rp.model_dump(mode="json"))

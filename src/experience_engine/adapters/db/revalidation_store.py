@@ -8,6 +8,7 @@ from sqlalchemy import Engine
 
 from experience_engine.adapters.db import tables as t
 from experience_engine.domain.ids import new_id
+from experience_engine.domain.recovery import TimeoutOrigin, TrialProvenance
 from experience_engine.domain.revalidation import (
     QuarantineReason,
     RejectReason,
@@ -55,6 +56,7 @@ class SqlRevalidationLog:
                 detail=list(r["detail"]),
                 facts=dict(r["facts"]),
                 rebase=dict(r["rebase"]),
+                gates=dict(r["gates"]),
                 n_trials=r["n_trials"],
                 n_unverified=r["n_unverified"],
                 tokens_cycle=r["tokens_cycle"],
@@ -96,6 +98,10 @@ class SqlRevalidationLog:
                     capability_ref=r["capability_ref"],
                     latency_ms=r["latency_ms"],
                     tenant_id=r["result_tenant_id"],
+                    timeout_origin=(
+                        TimeoutOrigin(r["timeout_origin"]) if r["timeout_origin"] else None
+                    ),
+                    provenance=TrialProvenance.model_validate(r["provenance"]),
                 ),
                 anchor=r["anchor"],
                 round_at=r["round_at"],
@@ -140,6 +146,10 @@ class SqlRevalidationLog:
                         verifier_version=tr.result.verifier_version,
                         capability_ref=tr.result.capability_ref,
                         result_tenant_id=tr.result.tenant_id,
+                        timeout_origin=(
+                            tr.result.timeout_origin.value if tr.result.timeout_origin else None
+                        ),
+                        provenance=tr.result.provenance.to_json(),
                         observed_at=tr.result.observed_at,
                         accepted=tr.accepted,
                         reject_reason=tr.reject_reason.value if tr.reject_reason else None,
@@ -166,6 +176,7 @@ class SqlRevalidationLog:
                         detail=x.detail,
                         facts=x.facts,
                         rebase=x.rebase,
+                        gates=x.gates,
                         n_trials=x.n_trials,
                         n_unverified=x.n_unverified,
                         tokens_cycle=x.tokens_cycle,
